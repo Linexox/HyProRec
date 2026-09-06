@@ -18,7 +18,7 @@ data:
   hyperedge_table_path: null
   embeddings_dir_name: embeddings
   views: []
-  topk: 3
+  topk: 2
   khop: 2
   max_length: 1024
 
