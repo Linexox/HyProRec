@@ -153,7 +153,28 @@ def encode_video(
     device: torch.device,
 ) -> torch.Tensor:
     processor = AutoImageProcessor.from_pretrained(model_path)
-    model = VideoMAEModel.from_pretrained(model_path).eval().to(device)
+    # START: Preserve pretrained Q/V biases under Transformers' renamed projections.
+    model, loading_info = VideoMAEModel.from_pretrained(
+        model_path,
+        key_mapping={r"\.q_bias$": ".query.bias", r"\.v_bias$": ".value.bias"},
+        output_loading_info=True,
+    )
+    missing = set(loading_info.get("missing_keys", []))
+    key_biases = {
+        f"encoder.layer.{index}.attention.attention.key.bias"
+        for index in range(model.config.num_hidden_layers)
+    }
+    if missing - key_biases:
+        raise ValueError(
+            f"VideoMAE encoder weights were not fully loaded: {sorted(missing)}"
+        )
+    # Original VideoMAE defines the key bias as zero rather than a saved parameter.
+    with torch.no_grad():
+        for name, parameter in model.named_parameters():
+            if name in missing:
+                parameter.zero_()
+    model = model.eval().to(device)
+    # END: Preserve pretrained Q/V biases under Transformers' renamed projections.
     outputs = []
     with torch.inference_mode():
         for batch in tqdm(
@@ -184,6 +205,10 @@ def prepare_embeddings(
         "num_items": num_items,
         "modalities": {},
     }
+    # Preserve provenance for modalities not regenerated in a partial run.
+    metadata_path = output_dir / "embedding_metadata.json"
+    if metadata_path.exists():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     encoders = {
         "txt": encode_text,
         "img": encode_image,
