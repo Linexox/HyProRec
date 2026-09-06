@@ -3,7 +3,7 @@ model:
   freeze_backbone: true
   beta: 0.75
   num_soft_prompt_tokens: 10
-  train_special_tokens: true
+  train_special_tokens: false
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3

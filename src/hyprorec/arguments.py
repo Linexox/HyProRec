@@ -16,7 +16,7 @@ class ModelArguments:
     freeze_backbone: bool = True
     beta: float = 0.75
     num_soft_prompt_tokens: int = 10
-    train_special_tokens: bool = True
+    train_special_tokens: bool = False
     hypergraph_hidden_dim: int = 1024
     hypergraph_output_dim: int = 256
     hypergraph_num_layers: int = 3

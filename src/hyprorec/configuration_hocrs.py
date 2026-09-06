@@ -86,7 +86,7 @@ class HoCRSConfig(PretrainedConfig):
         beta: float = 0.75,
         num_soft_prompt_tokens: int = 10,
         freeze_backbone: bool = True,
-        train_special_tokens: bool = True,
+        train_special_tokens: bool = False,
         node_token_id: int | None = None,
         hyperedge_token_id: int | None = None,
         rec_token_id: int | None = None,
