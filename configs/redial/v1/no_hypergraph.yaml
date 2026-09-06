@@ -20,7 +20,7 @@ data:
   views: []
   topk: 3
   khop: 2
-  max_length: 512
+  max_length: 1024
 
 training:
   output_dir: outputs/redial/v1/no-hypergraph

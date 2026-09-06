@@ -149,6 +149,42 @@ class HoCRSDataCollator:
             positions.extend((row_index, int(column)) for column in columns)
         return torch.tensor(positions, dtype=torch.long)
 
+    def _truncate(
+        self,
+        input_ids: list[int],
+        prompt_length: int,
+        protected_token_id: int,
+    ) -> tuple[list[int], int]:
+        """Keep graph prompts intact while trimming context, then response."""
+
+        if self.max_length is None or len(input_ids) <= self.max_length:
+            return input_ids, prompt_length
+
+        try:
+            protected_start = input_ids.index(protected_token_id)
+        except ValueError as error:
+            raise ValueError(
+                "The protected prompt boundary token is missing."
+            ) from error
+
+        prompt_prefix = input_ids[:protected_start]
+        protected_prompt = input_ids[protected_start:prompt_length]
+        response = input_ids[prompt_length:]
+        response_budget = self.max_length - len(protected_prompt)
+        if response_budget <= 0:
+            raise ValueError(
+                "The serialized graph prompt does not fit within max_length."
+            )
+
+        retained_response = response[:response_budget]
+        prefix_budget = response_budget - len(retained_response)
+        retained_prefix = prompt_prefix[-prefix_budget:] if prefix_budget else []
+        retained_prompt_length = len(retained_prefix) + len(protected_prompt)
+        return (
+            retained_prefix + protected_prompt + retained_response,
+            retained_prompt_length,
+        )
+
     def __call__(self, features: Sequence[dict[str, Any]]) -> BatchData:
         if not features:
             raise ValueError("Cannot collate an empty batch.")
@@ -177,15 +213,6 @@ class HoCRSDataCollator:
             f"{prompt}\n{feature['response']}{eos_token}"
             for prompt, feature in zip(prompts, features)
         ]
-        tokenize_kwargs = {
-            "add_special_tokens": False,
-            "padding": True,
-            "return_tensors": "pt",
-            "truncation": self.max_length is not None,
-        }
-        if self.max_length is not None:
-            tokenize_kwargs["max_length"] = self.max_length
-        encoded = self.processor(texts, **tokenize_kwargs)
         full_prompt_lengths = [
             len(
                 self.processor.tokenizer(
@@ -195,27 +222,32 @@ class HoCRSDataCollator:
             )
             for prompt in prompts
         ]
-        full_text_lengths = [
-            len(
-                self.processor.tokenizer(
-                    text,
-                    add_special_tokens=False,
-                )["input_ids"]
-            )
+        tokenized_texts = [
+            self.processor.tokenizer(text, add_special_tokens=False)["input_ids"]
             for text in texts
         ]
+        token_ids = self.processor.get_token_id_map()
+        protected_token_id = (
+            token_ids["graph_start_token_ids"][views[0]]
+            if views
+            else token_ids["rec_token_id"]
+        )
+        truncated = [
+            self._truncate(input_ids, prompt_length, protected_token_id)
+            for input_ids, prompt_length in zip(tokenized_texts, full_prompt_lengths)
+        ]
+        retained_input_ids, retained_prompt_lengths = zip(*truncated)
+        encoded = self.processor.tokenizer.pad(
+            [{"input_ids": input_ids} for input_ids in retained_input_ids],
+            padding=True,
+            return_tensors="pt",
+        )
 
         labels = encoded["input_ids"].clone()
         labels[encoded["attention_mask"] == 0] = -100
-        for row_index, (prompt_length, full_length) in enumerate(
-            zip(full_prompt_lengths, full_text_lengths)
-        ):
-            retained_length = int(encoded["attention_mask"][row_index].sum())
-            truncated_prefix = max(0, full_length - retained_length)
-            retained_prompt_length = max(0, prompt_length - truncated_prefix)
+        for row_index, retained_prompt_length in enumerate(retained_prompt_lengths):
             labels[row_index, :retained_prompt_length] = -100
 
-        token_ids = self.processor.get_token_id_map()
         for view in views:
             graphs: list[HypergraphData] = [
                 feature["hypergraphs"][view] for feature in features

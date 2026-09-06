@@ -253,6 +253,24 @@ class HoCRSModelTest(unittest.TestCase):
         self.assertGreater(int((batch["labels"] != -100).sum()), 0)
         self.assertEqual(batch["hypergraphs"]["co"]["node_positions"].shape[0], 2)
 
+    def test_long_response_is_truncated_after_complete_graph_prompt(self) -> None:
+        processor = build_processor()
+        graph = HypergraphData.from_hyperedges("co", [(0, [1])])
+        batch = HoCRSDataCollator(processor, max_length=50)(
+            [
+                {
+                    "context": " ".join(["hello"] * 100),
+                    "target_item_id": 1,
+                    "response": " ".join(["reply"] * 100),
+                    "hypergraphs": {"co": graph},
+                }
+            ]
+        )
+
+        self.assertEqual(batch["input_ids"].shape[1], 50)
+        self.assertGreater(int((batch["labels"] != -100).sum()), 0)
+        self.assertEqual(batch["hypergraphs"]["co"]["node_positions"].shape[0], 2)
+
     def test_collated_forward_backward_and_standard_reload(self) -> None:
         processor = build_processor()
         graph = HypergraphData.from_hyperedges("co", [(0, [1])])
