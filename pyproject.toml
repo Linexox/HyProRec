@@ -1,12 +1,12 @@
 [project]
 name = "hyprorec"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hypergraph prompting for multimodal conversational recommendation"
 readme = "README.md"
 authors = [
     { name = "linexox", email = "linexox7@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "torch==2.6.0+cu118",
     "torchvision==0.21.0+cu118",
@@ -23,6 +23,7 @@ dependencies = [
     "tqdm",
     "python-dotenv",
     "pyyaml",
+    "safetensors",
 ]
 
 [[tool.uv.index]]
@@ -45,7 +46,9 @@ torchvision = { index = "pytorch-cu118" }
 
 
 [project.scripts]
-hyprorec = "hyprorec:main"
+hyprorec-train = "hyprorec.scripts.train:main"
+hyprorec-prepare-hyperedges = "hyprorec.scripts.prepare_hyperedge_table:main"
+hyprorec-prepare-embeddings = "hyprorec.scripts.prepare_embeddings:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
