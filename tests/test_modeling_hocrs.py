@@ -79,6 +79,24 @@ def build_model(processor: HoCRSProcessor) -> HoCRSModel:
 
 
 class HoCRSModelTest(unittest.TestCase):
+    # START: Verify shared content initialization does not tie trainable tables.
+    def test_co_and_item_tables_copy_the_same_content_independently(self) -> None:
+        processor = build_processor()
+        model = build_model(processor)
+        content = torch.randn(3, 8)
+
+        model.initialize_feature_tables({"co": content}, item_table_init=content)
+
+        self.assertTrue(torch.equal(model.co_feature_table, content))
+        self.assertTrue(
+            torch.equal(model.recommendation_head.item_table.weight, content)
+        )
+        self.assertNotEqual(
+            model.co_feature_table.data_ptr(),
+            model.recommendation_head.item_table.weight.data_ptr(),
+        )
+    # END: Verify shared content initialization does not tie trainable tables.
+
     def test_soft_prompt_injection_supports_batches(self) -> None:
         processor = build_processor()
         model = build_model(processor)

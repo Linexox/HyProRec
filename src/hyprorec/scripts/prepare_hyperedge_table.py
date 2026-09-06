@@ -81,11 +81,13 @@ def prepare_hyperedge_table(
     topk: int = 50,
     similarity_batch_size: int = 512,
     device: torch.device | None = None,
+    embedding_dir: Path | None = None,
 ) -> None:
     if topk < 0:
         raise ValueError("topk must be non-negative.")
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    embedding_dir = dataset_dir / "embeddings"
+    # Modified: allow a newly encoded feature directory without replacing old data.
+    embedding_dir = embedding_dir or dataset_dir / "embeddings"
     embeddings = {
         modality: torch.load(
             embedding_dir / f"{modality}_embeddings.pt",
@@ -128,6 +130,8 @@ def parse_args() -> argparse.Namespace:
         description="Build separated HoCRS hypergraph neighbor tables."
     )
     parser.add_argument("--dataset-dir", type=Path, required=True)
+    # Modified: select the exact offline embedding version used for semantic edges.
+    parser.add_argument("--embedding-dir", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--topk", type=int, default=50)
     parser.add_argument("--similarity-batch-size", type=int, default=512)
@@ -146,6 +150,7 @@ def main() -> None:
         topk=args.topk,
         similarity_batch_size=args.similarity_batch_size,
         device=torch.device(args.device),
+        embedding_dir=args.embedding_dir,
     )
 
 

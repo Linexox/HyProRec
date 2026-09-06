@@ -32,6 +32,9 @@ class DataArguments:
     dataset_path: str = "data/lhf-redial"
     hyperedge_table_path: str | None = None
     embeddings_dir_name: str = "embeddings"
+    # START: Load the offline content initialization instead of fusing at train time.
+    content_table_path: str = "data/lhf-redial/embeddings/content_full.pt"
+    # END: Load the offline content initialization instead of fusing at train time.
     views: list[str] = field(default_factory=lambda: list(GRAPH_VIEWS))
     topk: int = 3
     khop: int = 2

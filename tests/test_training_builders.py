@@ -1,9 +1,7 @@
 import unittest
 
 import torch
-import torch.nn.functional as F
-
-from hyprorec.scripts.train import _build_feature_tables
+from hyprorec.scripts.prepare_content_table import build_content_table
 
 
 class FeatureTableBuilderTest(unittest.TestCase):
@@ -13,34 +11,30 @@ class FeatureTableBuilderTest(unittest.TestCase):
             for index, modality in enumerate(("txt", "img", "ado", "vdo"))
         }
 
-    def test_item_content_base_uses_enabled_semantic_modalities(self) -> None:
-        feature_tables, item_init = _build_feature_tables(
-            self.tables, ["co", "txt", "img"]
-        )
-        expected = F.normalize(
-            torch.stack(
-                [
-                    F.normalize(self.tables[modality], dim=-1)
-                    for modality in ("txt", "img")
-                ]
-            ).mean(dim=0),
-            dim=-1,
-        )
+    # START: Verify fixed-width slot concatenation for modality ablations.
+    def test_content_table_uses_enabled_slots_without_changing_width(self) -> None:
+        full = build_content_table(self.tables, ["txt", "img", "ado", "vdo"])
+        partial = build_content_table(self.tables, ["txt", "img"])
 
-        self.assertEqual(set(feature_tables), {"txt", "img"})
-        self.assertTrue(torch.equal(item_init, expected))
+        self.assertEqual(full.shape, (3, 16))
+        self.assertEqual(partial.shape, full.shape)
+        self.assertGreater(torch.count_nonzero(partial[:, :8]).item(), 0)
+        self.assertEqual(torch.count_nonzero(partial[:, 8:]).item(), 0)
 
-    def test_no_graph_content_base_falls_back_to_all_modalities(self) -> None:
-        feature_tables, item_init = _build_feature_tables(self.tables, [])
-        expected = F.normalize(
-            torch.stack(
-                [F.normalize(self.tables[modality], dim=-1) for modality in self.tables]
-            ).mean(dim=0),
-            dim=-1,
-        )
+    def test_content_table_supports_different_encoder_widths(self) -> None:
+        tables = {
+            modality: torch.ones(3, width)
+            for modality, width in zip(("txt", "img", "ado", "vdo"), (2, 3, 4, 5))
+        }
 
-        self.assertEqual(feature_tables, {})
-        self.assertTrue(torch.equal(item_init, expected))
+        content = build_content_table(tables, ["ado"])
+
+        self.assertEqual(content.shape, (3, 14))
+        self.assertEqual(torch.count_nonzero(content[:, :5]).item(), 0)
+        self.assertGreater(torch.count_nonzero(content[:, 5:9]).item(), 0)
+        self.assertEqual(torch.count_nonzero(content[:, 9:]).item(), 0)
+
+    # END: Verify fixed-width slot concatenation for modality ablations.
 
 
 if __name__ == "__main__":

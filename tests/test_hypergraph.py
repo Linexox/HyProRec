@@ -11,6 +11,31 @@ from hyprorec.scripts.prepare_hyperedge_table import compute_cooccurrence_neighb
 
 
 class HypergraphTest(unittest.TestCase):
+    # START: Verify unique-node budgeting and whole-edge early termination.
+    def test_node_limit_accepts_overlap_and_stops_at_first_overflow(self) -> None:
+        rows = [[i] for i in range(130)]
+        rows[124] = [124, 0, 1, 2]
+        rows[125] = [125, 126, 127, 128]
+        table = HypergraphTable({"co": rows})
+        graph = table.build_local(list(range(126)) + [129], "co", topk=3, khop=2)
+
+        self.assertEqual(graph.num_nodes, 125)
+        self.assertEqual(graph.num_hyperedges, 125)
+        self.assertEqual(graph.node_ids.tolist(), list(range(125)))
+        self.assertEqual(int((graph.hyperedge_index[1] == 124).sum()), 4)
+
+    def test_node_limit_does_not_partially_insert_an_edge(self) -> None:
+        rows = [[i] for i in range(128)]
+        rows[124] = [124, 125, 126, 127]
+        table = HypergraphTable({"txt": rows})
+        graph = table.build_local(list(range(126)), "txt", topk=3, khop=2)
+
+        self.assertEqual(graph.num_nodes, 124)
+        self.assertEqual(graph.num_hyperedges, 124)
+        self.assertNotIn(124, graph.node_ids.tolist())
+
+    # END: Verify unique-node budgeting and whole-edge early termination.
+
     def test_cooccurrence_uses_unique_items_per_training_dialogue(self) -> None:
         conversations = [
             {

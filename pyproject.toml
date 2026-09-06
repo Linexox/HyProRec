@@ -49,6 +49,8 @@ torchvision = { index = "pytorch-cu118" }
 hyprorec-train = "hyprorec.scripts.train:main"
 hyprorec-prepare-hyperedges = "hyprorec.scripts.prepare_hyperedge_table:main"
 hyprorec-prepare-embeddings = "hyprorec.scripts.prepare_embeddings:main"
+# Modified: expose offline fixed-slot content table preparation.
+hyprorec-prepare-content-table = "hyprorec.scripts.prepare_content_table:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]

@@ -16,9 +16,12 @@ model:
 data:
   dataset_path: data/lhf-redial
   hyperedge_table_path: null
-  embeddings_dir_name: embeddings
+  # START: Keep the graphless baseline on the same offline content initialization.
+  embeddings_dir_name: embeddings_v1
+  content_table_path: data/lhf-redial/content_tables_v1/full.pt
+  # END: Keep the graphless baseline on the same offline content initialization.
   views: []
-  topk: 2
+  topk: 3 # Modified: keep retrieval settings aligned with the main configuration.
   khop: 2
   max_length: 1024
 

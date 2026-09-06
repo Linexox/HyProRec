@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gc
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -173,10 +174,16 @@ def prepare_embeddings(
     model_paths: dict[str, str],
     batch_size: int | None,
     device: torch.device,
+    output_dir: Path | None = None,
 ) -> None:
-    output_dir = dataset_dir / "embeddings"
+    # START: Preserve native encoder widths and allow raw data and outputs to differ.
+    output_dir = output_dir or dataset_dir / "embeddings"
     output_dir.mkdir(parents=True, exist_ok=True)
     num_items = len(load_texts(dataset_dir))
+    metadata: dict[str, object] = {
+        "num_items": num_items,
+        "modalities": {},
+    }
     encoders = {
         "txt": encode_text,
         "img": encode_image,
@@ -190,21 +197,33 @@ def prepare_embeddings(
             batch_size or DEFAULT_BATCH_SIZES[modality],
             device,
         )
-        if embeddings.shape != (num_items, 768):
+        if embeddings.ndim != 2 or embeddings.size(0) != num_items:
             raise ValueError(
                 f"{modality} embeddings have shape {tuple(embeddings.shape)}, "
-                f"expected ({num_items}, 768)."
+                f"expected ({num_items}, feature_dim)."
             )
         torch.save(embeddings.float(), output_dir / f"{modality}_embeddings.pt")
+        metadata["modalities"][modality] = {
+            "model_name_or_path": model_paths[modality],
+            "shape": list(embeddings.shape),
+            "normalized": True,
+        }
         del embeddings
         gc.collect()
         if device.type == "cuda":
             torch.cuda.empty_cache()
+    (output_dir / "embedding_metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    # END: Preserve native encoder widths and allow raw data and outputs to differ.
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-dir", type=Path, required=True)
+    # Modified: write new embeddings without overwriting another project's tables.
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument(
         "--modality", nargs="+", choices=MODALITIES, default=list(MODALITIES)
     )
@@ -227,6 +246,7 @@ def main() -> None:
         },
         batch_size=args.batch_size,
         device=torch.device(args.device),
+        output_dir=args.output_dir,
     )
 
 

@@ -1,3 +1,4 @@
+# START: Complete co-img experiment configuration.
 model:
   backbone_name_or_path: microsoft/DialoGPT-small
   freeze_backbone: true
@@ -16,25 +17,20 @@ model:
 data:
   dataset_path: data/lhf-redial
   hyperedge_table_path: data/lhf-redial/hyperedge_table_v1.json
-  # START: Load freshly encoded modality tables and offline full-content initialization.
   embeddings_dir_name: embeddings_v1
-  content_table_path: data/lhf-redial/content_tables_v1/full.pt
-  # END: Load freshly encoded modality tables and offline full-content initialization.
-  views: [co, txt, img, ado, vdo]
-  topk: 3 # Modified: restore three neighbors per anchor.
+  content_table_path: data/lhf-redial/content_tables_v1/img.pt
+  views: [co, img]
+  topk: 3
   khop: 2
   max_length: 1024
 
 training:
-  # Modified: isolate results produced with offline concatenated content.
-  output_dir: outputs/redial/v1/content-concat/full
+  output_dir: outputs/redial/v1/content-concat/co-img
   do_train: true
   do_eval: true
   do_predict: false
-  # START: Leave headroom for topk=3 full-view graph prompts.
   per_device_train_batch_size: 8
   per_device_eval_batch_size: 8
-  # END: Leave headroom for topk=3 full-view graph prompts.
   gradient_accumulation_steps: 1
   num_train_epochs: 8
   learning_rate: 0.00005
@@ -51,9 +47,10 @@ training:
   greater_is_better: false
   save_total_limit: 2
   report_to: wandb
-  run_name: full
+  run_name: co-img
   seed: 42
   data_seed: 42
   dataloader_num_workers: 4
   dp_replicate_size: 1
   dp_shard_size: 1
+# END: Complete co-img experiment configuration.

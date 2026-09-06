@@ -12,13 +12,15 @@ language-model backbone. Grounding and TASK are intentionally absent from v1.
 - Each semantic view is built only from nearest neighbors in that modality.
 - Every view has an independent HGCN and graph-to-LM projector. Graph tokens
   from different views are not aligned or fused position by position.
-- The co-occurrence node table and the trainable recommendation item table are
-  separate tensors. The Item Table is initialized from the normalized content
-  basis and optimized independently. Co-occurrence node features are an
-  independent trainable table with random initialization unless an explicit
-  `co` table is supplied.
-- With semantic views enabled, the content basis is the normalized mean of
-  those enabled modalities. A co-only run falls back to all four modalities.
+<!-- START: Document offline fixed-slot content initialization. -->
+- The co-occurrence node table and recommendation Item Table are separate
+  trainable tensors initialized from the same offline content table.
+- Content tables concatenate normalized modality embeddings in fixed
+  `txt/img/ado/vdo` slots. Disabled modality slots are zero, so every ablation
+  retains the same width and parameter capacity.
+- A co-only run uses the full four-modality content table; `co-*` runs use the
+  matching single-modality content table.
+<!-- END: Document offline fixed-slot content initialization. -->
 - An empty `views` list is a valid no-hypergraph baseline: no topology file is
   loaded and no HGCN/projector is constructed. Its Item Table still receives
   the fused content initialization from all four modalities.
@@ -32,21 +34,35 @@ data/lhf-redial/
 ├── test_data.json
 ├── movies_info.csv
 ├── hyperedge_table.json
-├── embeddings/
+├── embeddings_v1/
 │   ├── txt_embeddings.pt
 │   ├── img_embeddings.pt
 │   ├── ado_embeddings.pt
 │   └── vdo_embeddings.pt
+├── content_tables_v1/
+│   ├── full.pt
+│   ├── txt.pt
+│   ├── img.pt
+│   ├── ado.pt
+│   └── vdo.pt
 └── mm/
     └── ... raw modality blocks used only by embedding preparation
 ```
 
-Prepare offline features and the separated hyperedge table:
+<!-- START: Document separate raw encoding and content-table preparation. -->
+Prepare native-width embeddings, fixed-slot content tables, and hyperedges:
 
 ```bash
-hyprorec-prepare-embeddings --dataset-dir data/lhf-redial
-hyprorec-prepare-hyperedges --dataset-dir data/lhf-redial --topk 50
+hyprorec-prepare-embeddings --dataset-dir data/lhf-redial \
+  --output-dir data/lhf-redial/embeddings_v1
+hyprorec-prepare-content-table --embedding-dir data/lhf-redial/embeddings_v1 \
+  --output data/lhf-redial/content_tables_v1/full.pt \
+  --modality txt img ado vdo
+hyprorec-prepare-hyperedges --dataset-dir data/lhf-redial \
+  --embedding-dir data/lhf-redial/embeddings_v1 \
+  --output data/lhf-redial/hyperedge_table_v1.json --topk 50
 ```
+<!-- END: Document separate raw encoding and content-table preparation. -->
 
 `hyperedge_table.json` has five explicit top-level keys: `co`, `txt`, `img`,
 `ado`, and `vdo`. Each row starts with its anchor item ID and is followed by a

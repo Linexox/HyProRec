@@ -115,6 +115,8 @@ class HypergraphTable:
         frontier = list(dict.fromkeys(anchors))
         visited: set[int] = set()
         hyperedges: list[tuple[int, list[int]]] = []
+        selected_nodes: set[int] = set()
+        max_nodes = 125
 
         for _ in range(khop):
             next_frontier: list[int] = []
@@ -123,6 +125,14 @@ class HypergraphTable:
                     continue
                 row = self.tables[view][anchor_id]
                 neighbors = row[1 : topk + 1]
+                candidate_nodes = {anchor_id, *neighbors}
+                if len(selected_nodes | candidate_nodes) > max_nodes:
+                    if not hyperedges:
+                        raise ValueError(
+                            "The first hyperedge exceeds the 125-node limit."
+                        )
+                    return HypergraphData.from_hyperedges(view, hyperedges)
+                selected_nodes.update(candidate_nodes)
                 hyperedges.append((anchor_id, neighbors))
                 visited.add(anchor_id)
                 next_frontier.extend(neighbors)
