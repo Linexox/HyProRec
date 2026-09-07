@@ -1,0 +1,57 @@
+# START: v2 graph-prompt ablation with the same offline item initialization.
+model:
+  backbone_name_or_path: microsoft/DialoGPT-small
+  freeze_backbone: true
+  beta: 0.75
+  num_soft_prompt_tokens: 10
+  train_special_tokens: false
+  hypergraph_hidden_dim: 1024
+  hypergraph_output_dim: 256
+  hypergraph_num_layers: 3
+  hypergraph_dropout: 0.0
+  use_hypergraph_encoder: true
+  freeze_hypergraph_encoder: true
+  recommendation_hidden_dim: 768
+  recommendation_dropout: 0.0
+  recommendation_temperature: 0.07
+
+data:
+  dataset_path: data/lhf-redial
+  hyperedge_table_path: null
+  embeddings_dir_name: embeddings_v1
+  content_table_path: data/lhf-redial/content_tables_v1/full.pt
+  views: []
+  topk: 3
+  khop: 2
+  max_length: 1024
+
+training:
+  output_dir: outputs/redial/v2/no-hypergraph
+  do_train: true
+  do_eval: true
+  do_predict: false
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 1
+  num_train_epochs: 8
+  learning_rate: 0.00005
+  weight_decay: 0.0
+  warmup_steps: 0.1
+  bf16: true
+  gradient_checkpointing: false
+  eval_strategy: epoch
+  save_strategy: epoch
+  logging_strategy: steps
+  logging_steps: 20
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  save_total_limit: 2
+  report_to: wandb
+  run_name: no-hypergraph
+  seed: 42
+  data_seed: 42
+  dataloader_num_workers: 4
+  dp_replicate_size: 1
+  dp_shard_size: 1
+# END: v2 graph-prompt ablation with the same offline item initialization.

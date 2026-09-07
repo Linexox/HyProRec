@@ -80,6 +80,7 @@ class HoCRSConfig(PretrainedConfig):
         num_items: int = 6924,
         item_dim: int = 768,
         use_hypergraph_encoder: bool = True,
+        freeze_hypergraph_encoder: bool = False,
         recommendation_hidden_dim: int = 768,
         recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
@@ -119,6 +120,7 @@ class HoCRSConfig(PretrainedConfig):
         self.num_items = num_items
         self.item_dim = item_dim
         self.use_hypergraph_encoder = use_hypergraph_encoder
+        self.freeze_hypergraph_encoder = freeze_hypergraph_encoder
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_dropout = recommendation_dropout
         self.recommendation_temperature = recommendation_temperature

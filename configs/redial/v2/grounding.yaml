@@ -1,0 +1,27 @@
+grounding:
+  output_dir: outputs/redial/v2/grounding
+  dataset_path: data/lhf-redial
+  hyperedge_table_path: data/lhf-redial/hyperedge_table_v1.json
+  embeddings_dir_name: embeddings_v1
+  modalities: [co, txt, img, ado, vdo]
+  topk: 3
+  khop: 2
+  validation_ratio: 0.1
+  source_text_model: sentence-transformers/all-mpnet-base-v2
+  source_image_model: google/vit-base-patch16-224-in21k
+  source_audio_model: facebook/wav2vec2-base
+  source_video_model: MCG-NJU/videomae-base
+  source_hidden_dim: 256
+  hypergraph_hidden_dim: 1024
+  hypergraph_output_dim: 256
+  hypergraph_num_layers: 3
+  hypergraph_dropout: 0.0
+  temperature: 0.07
+  lambda_node: 1.0
+  lambda_edge: 1.0
+  lambda_member: 1.0
+  member_negative_ratio: 1
+  seed: 42
+  batch_size: 8
+  num_epochs: 10
+  learning_rate: 0.0001

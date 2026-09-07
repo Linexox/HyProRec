@@ -26,13 +26,16 @@ def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
     # START: Load only enabled semantic views and retain their native widths.
     dataset_path = Path(data_args.dataset_path)
     embedding_path = dataset_path / data_args.embeddings_dir_name
+    requested = set(data_args.views)
+    if "co" in requested:
+        requested.add("txt")
     tables = {
         modality: torch.load(
             embedding_path / f"{modality}_embeddings.pt",
             map_location="cpu",
             weights_only=True,
         ).float()
-        for modality in data_args.views
+        for modality in requested
         if modality in MODALITIES
     }
     if any(table.ndim != 2 for table in tables.values()):
@@ -71,7 +74,7 @@ def _build_model(
         raise ValueError("Content and modality tables contain different item counts.")
     view_input_dims = {
         **{view: table.size(1) for view, table in modality_tables.items()},
-        **({"co": item_dim} if "co" in data_args.views else {}),
+        **({"co": modality_tables["txt"].size(1)} if "co" in data_args.views else {}),
     }
     graph_configs = {
         view: HoCRSHypergraphConfig(
@@ -90,6 +93,7 @@ def _build_model(
         num_items=num_items,
         item_dim=item_dim,
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
+        freeze_hypergraph_encoder=model_args.freeze_hypergraph_encoder,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_dropout=model_args.recommendation_dropout,
         recommendation_temperature=model_args.recommendation_temperature,
@@ -108,11 +112,30 @@ def _build_model(
     # START: Initialize co nodes and items from independent copies of one content base.
     feature_tables = dict(modality_tables)
     if "co" in data_args.views:
-        feature_tables["co"] = content_table
+        feature_tables["co"] = modality_tables["txt"]
     model.initialize_feature_tables(
         feature_tables,
         item_table_init=content_table,
     )
+    if model_args.grounding_checkpoint_path:
+        if not model_args.use_hypergraph_encoder:
+            raise ValueError(
+                "grounding_checkpoint_path requires use_hypergraph_encoder=true."
+            )
+        checkpoint_root = Path(model_args.grounding_checkpoint_path)
+        for view in data_args.views:
+            if view not in model.hypergraph_encoders:
+                continue
+            checkpoint = checkpoint_root / view / "pytorch_model.bin"
+            if not checkpoint.is_file():
+                raise FileNotFoundError(f"Missing Grounding checkpoint: {checkpoint}")
+            payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
+            graph_state = {
+                key.removeprefix("graph_tower."): value
+                for key, value in payload.items()
+                if key.startswith("graph_tower.")
+            }
+            model.hypergraph_encoders[view].load_state_dict(graph_state, strict=True)
     # END: Initialize co nodes and items from independent copies of one content base.
     return model
 

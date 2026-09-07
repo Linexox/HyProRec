@@ -75,12 +75,14 @@ def batch_hypergraphs(graphs: Sequence[HypergraphData]) -> HypergraphBatch:
     incidence_indices = []
     node_ptr = [0]
     edge_ptr = [0]
+    anchor_indices = []
     for graph in graphs:
         incidence = graph.hyperedge_index.clone()
         incidence[0] += node_ptr[-1]
         incidence[1] += edge_ptr[-1]
         node_ids.append(graph.node_ids)
         incidence_indices.append(incidence)
+        anchor_indices.append(graph.hyperedge_anchor_index + node_ptr[-1])
         node_ptr.append(node_ptr[-1] + graph.num_nodes)
         edge_ptr.append(edge_ptr[-1] + graph.num_hyperedges)
 
@@ -90,6 +92,7 @@ def batch_hypergraphs(graphs: Sequence[HypergraphData]) -> HypergraphBatch:
             "hyperedge_index": torch.cat(incidence_indices, dim=1),
             "node_ptr": torch.tensor(node_ptr, dtype=torch.long),
             "edge_ptr": torch.tensor(edge_ptr, dtype=torch.long),
+            "hyperedge_anchor_index": torch.cat(anchor_indices),
         }
     )
 

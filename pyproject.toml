@@ -47,6 +47,9 @@ torchvision = { index = "pytorch-cu118" }
 
 [project.scripts]
 hyprorec-train = "hyprorec.scripts.train:main"
+# START: Expose the staged node/hyperedge/membership Grounding recipe.
+hyprorec-ground = "hyprorec.scripts.ground:main"
+# END: Expose the staged node/hyperedge/membership Grounding recipe.
 hyprorec-prepare-hyperedges = "hyprorec.scripts.prepare_hyperedge_table:main"
 hyprorec-prepare-embeddings = "hyprorec.scripts.prepare_embeddings:main"
 # Modified: expose offline fixed-slot content table preparation.

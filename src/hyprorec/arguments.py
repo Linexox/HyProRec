@@ -22,6 +22,8 @@ class ModelArguments:
     hypergraph_num_layers: int = 3
     hypergraph_dropout: float = 0.0
     use_hypergraph_encoder: bool = True
+    freeze_hypergraph_encoder: bool = False
+    grounding_checkpoint_path: str | None = None
     recommendation_hidden_dim: int = 768
     recommendation_dropout: float = 0.0
     recommendation_temperature: float = 0.07
@@ -45,6 +47,52 @@ class DataArguments:
         unknown_views = set(self.views) - set(GRAPH_VIEWS)
         if unknown_views:
             raise ValueError(f"Unknown graph views: {sorted(unknown_views)}")
+
+
+@dataclass
+class GroundingArguments:
+    """Grounding-specific data, encoder, and objective settings."""
+
+    output_dir: str = "outputs/redial/v2/grounding"
+    dataset_path: str = "data/lhf-redial"
+    hyperedge_table_path: str | None = None
+    embeddings_dir_name: str = "embeddings"
+    modalities: list[str] = field(default_factory=lambda: list(GRAPH_VIEWS))
+    topk: int = 3
+    khop: int = 2
+    validation_ratio: float = 0.1
+    source_text_model: str = "sentence-transformers/all-mpnet-base-v2"
+    source_image_model: str = "google/vit-base-patch16-224-in21k"
+    source_audio_model: str = "facebook/wav2vec2-base"
+    source_video_model: str = "MCG-NJU/videomae-base"
+    source_hidden_dim: int = 256
+    hypergraph_hidden_dim: int = 1024
+    hypergraph_output_dim: int = 256
+    hypergraph_num_layers: int = 3
+    hypergraph_dropout: float = 0.0
+    temperature: float = 0.07
+    lambda_node: float = 1.0
+    lambda_edge: float = 1.0
+    lambda_member: float = 1.0
+    member_negative_ratio: int = 1
+    seed: int = 42
+    batch_size: int = 8
+    num_epochs: int = 10
+    learning_rate: float = 1e-4
+
+    def __post_init__(self) -> None:
+        self.modalities = list(dict.fromkeys(self.modalities))
+        unknown = set(self.modalities) - set(GRAPH_VIEWS)
+        if unknown:
+            raise ValueError(f"Unknown grounding views: {sorted(unknown)}")
+        if not self.modalities:
+            raise ValueError("At least one grounding view is required.")
+        if self.topk < 1 or self.khop < 1:
+            raise ValueError("topk and khop must be positive.")
+        if not 0.0 < self.validation_ratio < 1.0:
+            raise ValueError("validation_ratio must be in (0, 1).")
+        if self.member_negative_ratio < 1:
+            raise ValueError("member_negative_ratio must be positive.")
 
 
 @dataclass
@@ -87,4 +135,9 @@ class HoCRSTrainingArguments(TrainingArguments):
         super().__post_init__()
 
 
-__all__ = ["DataArguments", "HoCRSTrainingArguments", "ModelArguments"]
+__all__ = [
+    "DataArguments",
+    "GroundingArguments",
+    "HoCRSTrainingArguments",
+    "ModelArguments",
+]

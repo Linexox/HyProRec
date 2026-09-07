@@ -19,6 +19,7 @@ class HypergraphData:
     view: str
     node_ids: torch.Tensor
     hyperedge_index: torch.Tensor
+    hyperedge_anchor_index: torch.Tensor
 
     @classmethod
     def from_hyperedges(
@@ -30,6 +31,7 @@ class HypergraphData:
         node_to_local: dict[int, int] = {}
         incidence_nodes: list[int] = []
         incidence_edges: list[int] = []
+        anchor_indices: list[int] = []
 
         def local_index(node_id: int) -> int:
             if node_id not in node_to_local:
@@ -39,6 +41,7 @@ class HypergraphData:
 
         for edge_id, (anchor_id, neighbor_ids) in enumerate(hyperedges):
             members = list(dict.fromkeys((anchor_id, *neighbor_ids)))
+            anchor_indices.append(local_index(anchor_id))
             for node_id in members:
                 incidence_nodes.append(local_index(node_id))
                 incidence_edges.append(edge_id)
@@ -52,6 +55,7 @@ class HypergraphData:
                 [incidence_nodes, incidence_edges],
                 dtype=torch.long,
             ),
+            hyperedge_anchor_index=torch.tensor(anchor_indices, dtype=torch.long),
         )
 
     @property
@@ -61,6 +65,14 @@ class HypergraphData:
     @property
     def num_hyperedges(self) -> int:
         return int(self.hyperedge_index[1].max().item()) + 1
+
+    def to(self, device: torch.device | str) -> HypergraphData:
+        return HypergraphData(
+            view=self.view,
+            node_ids=self.node_ids.to(device),
+            hyperedge_index=self.hyperedge_index.to(device),
+            hyperedge_anchor_index=self.hyperedge_anchor_index.to(device),
+        )
 
 
 class HypergraphTable:

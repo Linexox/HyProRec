@@ -266,6 +266,16 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         self._initialize_special_token_embeddings()
         if config.freeze_backbone:
             self.backbone.requires_grad_(False)
+        self.hypergraph_encoders.requires_grad_(
+            not config.freeze_hypergraph_encoder
+        )
+        if config.freeze_hypergraph_encoder:
+            self.hypergraph_encoders.eval()
+
+    def set_hypergraph_training(self, trainable: bool) -> None:
+        """Enable or freeze graph towers without changing projector training."""
+        self.hypergraph_encoders.requires_grad_(trainable)
+        self.hypergraph_encoders.train(trainable)
 
     def _initialize_special_token_embeddings(self) -> None:
         if self.special_token_embeddings is None:
@@ -344,6 +354,8 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         super().train(mode)
         if self.config.freeze_backbone:
             self.backbone.eval()
+        if self.config.freeze_hypergraph_encoder:
+            self.hypergraph_encoders.eval()
         return self
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None) -> None:

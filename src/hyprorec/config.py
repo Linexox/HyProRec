@@ -11,7 +11,12 @@ from typing import Any, Sequence
 import yaml
 from transformers import HfArgumentParser
 
-from .arguments import DataArguments, HoCRSTrainingArguments, ModelArguments
+from .arguments import (
+    DataArguments,
+    GroundingArguments,
+    HoCRSTrainingArguments,
+    ModelArguments,
+)
 
 CONFIG_SECTIONS = (
     ("model", ModelArguments),
@@ -69,4 +74,36 @@ def parse_experiment_args(
     return model_args, data_args, training_args, remaining.config.resolve()
 
 
-__all__ = ["CONFIG_SECTIONS", "parse_experiment_args"]
+def parse_grounding_args(
+    args: Sequence[str] | None = None,
+) -> tuple[GroundingArguments, Path]:
+    """Parse a dedicated Grounding recipe from YAML or JSON."""
+
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=Path, required=True)
+    config_namespace, _ = config_parser.parse_known_args(args)
+    config_path = config_namespace.config.resolve()
+    with config_path.open(encoding="utf-8") as file:
+        if config_path.suffix.lower() in {".yaml", ".yml"}:
+            payload = yaml.safe_load(file)
+        elif config_path.suffix.lower() == ".json":
+            payload = json.load(file)
+        else:
+            raise ValueError("Grounding configs must be YAML or JSON files.")
+    if not isinstance(payload, dict):
+        raise TypeError("The Grounding config root must be an object.")
+    section = payload.get("grounding", payload)
+    if not isinstance(section, dict):
+        raise TypeError("The Grounding config must be an object.")
+    valid_fields = {field.name for field in fields(GroundingArguments) if field.init}
+    unknown = set(section) - valid_fields
+    if unknown:
+        raise ValueError(f"Unknown grounding fields: {sorted(unknown)}")
+    parser = HfArgumentParser(GroundingArguments)
+    parser.add_argument("--config", type=Path, required=True)
+    parser.set_defaults(**section)
+    grounding_args, remaining = parser.parse_args_into_dataclasses(args=args)
+    return grounding_args, remaining.config.resolve()
+
+
+__all__ = ["CONFIG_SECTIONS", "parse_experiment_args", "parse_grounding_args"]

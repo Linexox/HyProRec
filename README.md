@@ -1,9 +1,9 @@
 # HyProRec
 
-HyProRec is the clean implementation of the first end-to-end HoCRS model. It
-uses one dialogue co-occurrence hypergraph and up to four modality-similarity
-hypergraphs (`txt`, `img`, `ado`, and `vdo`) as prompts for an optional causal
-language-model backbone. Grounding and TASK are intentionally absent from v1.
+HyProRec v2 implements staged Grounding followed by CRS. It uses one dialogue
+co-occurrence hypergraph and up to four modality-similarity hypergraphs (`txt`,
+`img`, `ado`, and `vdo`) as prompts for an optional causal-language-model
+backbone. TASK is intentionally not part of this branch.
 
 ## Method boundary
 
@@ -13,13 +13,18 @@ language-model backbone. Grounding and TASK are intentionally absent from v1.
 - Every view has an independent HGCN and graph-to-LM projector. Graph tokens
   from different views are not aligned or fused position by position.
 <!-- START: Document offline fixed-slot content initialization. -->
-- The co-occurrence node table and recommendation Item Table are separate
-  trainable tensors initialized from the same offline content table.
+- The recommendation Item Table is initialized from an offline fixed-slot
+  content table. The co-occurrence graph keeps its own trainable node table,
+  initialized from the text embedding table because its topology is based on
+  dialogue co-occurrence rather than semantic similarity.
 - Content tables concatenate normalized modality embeddings in fixed
   `txt/img/ado/vdo` slots. Disabled modality slots are zero, so every ablation
   retains the same width and parameter capacity.
-- A co-only run uses the full four-modality content table; `co-*` runs use the
-  matching single-modality content table.
+- A co-only run uses the full four-modality content table for the Item Table;
+  its co-occurrence node table still uses the text embedding table.
+- Grounding aligns graph nodes, hyperedges, and membership relations to the
+  corresponding raw-content encoder before CRS loads and freezes each graph
+  tower.
 <!-- END: Document offline fixed-slot content initialization. -->
 - An empty `views` list is a valid no-hypergraph baseline: no topology file is
   loaded and no HGCN/projector is constructed. Its Item Table still receives
@@ -67,6 +72,18 @@ hyprorec-prepare-hyperedges --dataset-dir data/lhf-redial \
 `hyperedge_table.json` has five explicit top-level keys: `co`, `txt`, `img`,
 `ado`, and `vdo`. Each row starts with its anchor item ID and is followed by a
 ranked neighbor list.
+
+Ground the graph towers before CRS:
+
+```bash
+hyprorec-ground --config configs/redial/v2/grounding.yaml
+```
+
+The v2 CRS recipe loads those per-view towers and freezes them:
+
+```bash
+hyprorec-train --config configs/redial/v2/full.yaml
+```
 
 ## Training
 
