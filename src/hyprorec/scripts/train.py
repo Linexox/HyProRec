@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer
+from transformers import AutoTokenizer, Trainer  # Modified: backbone selection lives in the model module.
 from transformers.trainer_utils import get_last_checkpoint
 
 from ..arguments import DataArguments, ModelArguments
@@ -18,7 +18,7 @@ from ..constants import MODALITIES
 from ..data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
 from ..data.hypergraph import HypergraphTable
 from ..metrics import build_compute_metrics, preprocess_logits_for_metrics
-from ..modeling_hocrs import HoCRSModel
+from ..modeling_hocrs import HoCRSModel, load_backbone  # Modified: support Omni Thinker.
 from ..processing_hocrs import HoCRSProcessor
 
 
@@ -61,7 +61,7 @@ def _build_model(
     modality_tables: dict[str, torch.Tensor],
     content_table: torch.Tensor,
 ) -> HoCRSModel:
-    backbone = AutoModelForCausalLM.from_pretrained(model_args.backbone_name_or_path)
+    backbone = load_backbone(model_args.backbone_name_or_path)  # Modified: select Thinker for Omni.
     backbone.resize_token_embeddings(len(processor.tokenizer))
 
     token_ids = processor.get_token_id_map()

@@ -8,11 +8,32 @@ from typing import Any, Mapping
 import torch
 from torch import nn
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, PreTrainedModel
+from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel  # Modified: inspect backbone type before loading.
 from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import ModelOutput
 
 from .configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
+
+
+# START: Load only Omni Thinker, while retaining the existing causal-LM path.
+def load_backbone(name_or_path: str) -> nn.Module:
+    config = AutoConfig.from_pretrained(name_or_path)
+    if config.model_type in {"qwen2_5_omni", "qwen2_5_omni_thinker"}:
+        from transformers import Qwen2_5OmniThinkerForConditionalGeneration
+
+        return Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
+            name_or_path, dtype="auto"
+        )
+    return AutoModelForCausalLM.from_pretrained(name_or_path)
+
+
+def _backbone_from_config(config) -> nn.Module:
+    if config.model_type == "qwen2_5_omni_thinker":
+        from transformers import Qwen2_5OmniThinkerForConditionalGeneration
+
+        return Qwen2_5OmniThinkerForConditionalGeneration(config)
+    return AutoModelForCausalLM.from_config(config)
+# END: Load only Omni Thinker, while retaining the existing causal-LM path.
 
 
 def _hidden_size(config) -> int:
@@ -197,7 +218,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
 
     def __init__(self, config: HoCRSConfig, backbone: nn.Module | None = None) -> None:
         super().__init__(config)
-        self.backbone = backbone or AutoModelForCausalLM.from_config(config.backbone_config)
+        self.backbone = backbone or _backbone_from_config(config.backbone_config)  # Modified: reconstruct Thinker checkpoints.
         lm_hidden_size = _hidden_size(config.backbone_config)
 
         self.hypergraph_encoders = nn.ModuleDict()
@@ -428,6 +449,10 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             inputs_embeds = self._inject_special_embeddings(input_ids, inputs_embeds)
             if self.config.views:
                 inputs_embeds = self._inject_hypergraphs(inputs_embeds, hypergraphs)
+        # START: Thinker needs token IDs for its RoPE bookkeeping, even with injected embeddings.
+        if self.config.backbone_config.model_type == "qwen2_5_omni_thinker":
+            kwargs["input_ids"] = input_ids
+        # END: Thinker needs token IDs for its RoPE bookkeeping, even with injected embeddings.
         backbone_output = self.backbone(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
