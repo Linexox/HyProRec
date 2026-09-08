@@ -86,6 +86,18 @@ class HoCRSAlignmentModel(PreTrainedModel):
     base_model_prefix = "source_encoders"
     supports_gradient_checkpointing = True
 
+    # START: Composite source encoders must load outside the outer meta context.
+    @classmethod
+    def get_init_context(cls, *args, **kwargs):
+        contexts = super().get_init_context(*args, **kwargs)
+        return [
+            context
+            for context in contexts
+            if not (isinstance(context, torch.device) and context.type == "meta")
+        ]
+
+    # END: Composite source encoders must load outside the outer meta context.
+
     def __init__(self, config: HoCRSAlignmentConfig) -> None:
         super().__init__(config)
         loaders = {
