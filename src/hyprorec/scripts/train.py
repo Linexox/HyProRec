@@ -90,6 +90,16 @@ def _build_model(
         num_items=num_items,
         item_dim=item_dim,
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
+        # START: Pass the v3 joint Grounding and Item Table choices into checkpoints.
+        use_source_projector=model_args.use_source_projector,
+        grounding_weight=model_args.grounding_weight,
+        grounding_ga_sa_weight=model_args.grounding_ga_sa_weight,
+        grounding_ga_sn_weight=model_args.grounding_ga_sn_weight,
+        grounding_sa_sn_weight=model_args.grounding_sa_sn_weight,
+        grounding_temperature=model_args.grounding_temperature,
+        item_table_init=model_args.item_table_init,
+        train_item_table=model_args.train_item_table,
+        # END: Pass the v3 joint Grounding and Item Table choices into checkpoints.
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_dropout=model_args.recommendation_dropout,
         recommendation_temperature=model_args.recommendation_temperature,
@@ -111,7 +121,9 @@ def _build_model(
         feature_tables["co"] = content_table
     model.initialize_feature_tables(
         feature_tables,
-        item_table_init=content_table,
+        item_table_init=(
+            content_table if model_args.item_table_init == "aligned_content" else None
+        ),
     )
     # END: Initialize co nodes and items from independent copies of one content base.
     return model

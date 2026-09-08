@@ -76,6 +76,8 @@ class HypergraphTest(unittest.TestCase):
         self.assertEqual(batch.batch_size, 2)
         self.assertEqual(batch["node_ptr"].tolist(), [0, 2, 4])
         self.assertEqual(batch["edge_ptr"].tolist(), [0, 2, 3])
+        # Modified: anchors remain aligned after disjoint graph packing.
+        self.assertEqual(batch["hyperedge_anchor_index"].tolist(), [0, 1, 2])
         self.assertGreaterEqual(int(batch["hyperedge_index"][1, -1]), 2)
 
     def test_batch_device_transfer_is_recursive_and_non_mutating(self) -> None:

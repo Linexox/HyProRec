@@ -95,6 +95,7 @@ class HoCRSModelTest(unittest.TestCase):
             model.co_feature_table.data_ptr(),
             model.recommendation_head.item_table.weight.data_ptr(),
         )
+
     # END: Verify shared content initialization does not tie trainable tables.
 
     def test_soft_prompt_injection_supports_batches(self) -> None:
@@ -252,6 +253,93 @@ class HoCRSModelTest(unittest.TestCase):
         self.assertIsNotNone(
             model.hypergraph_projectors["co"].node_projector.weight.grad
         )
+
+    # START: Verify the v3 Grounding branch and shared source projector gradient path.
+    def test_joint_grounding_updates_graph_and_source_projectors(self) -> None:
+        processor = build_processor()
+        backbone_config = GPT2Config(
+            vocab_size=len(processor.tokenizer),
+            n_embd=16,
+            n_layer=1,
+            n_head=2,
+            n_positions=128,
+            eos_token_id=1,
+            pad_token_id=1,
+        )
+        graph_config = HoCRSHypergraphConfig(
+            input_dim=8, hidden_dim=8, output_dim=8, num_layers=1
+        )
+        config = HoCRSConfig(
+            backbone_config=backbone_config,
+            views=["txt"],
+            txt_hypergraph_config=graph_config,
+            num_items=3,
+            item_dim=8,
+            use_source_projector=True,
+            grounding_weight=0.5,
+            grounding_ga_sa_weight=1.0,
+            grounding_ga_sn_weight=1.0,
+            grounding_sa_sn_weight=1.0,
+            recommendation_hidden_dim=8,
+            num_soft_prompt_tokens=2,
+            freeze_backbone=True,
+            **processor.get_token_id_map(),
+        )
+        model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
+        model.initialize_feature_tables(
+            {"txt": torch.randn(3, 8)}, item_table_init=torch.randn(3, 8)
+        )
+        self.assertTrue(torch.equal(model.source_projector.weight, torch.eye(8)))
+        batch = HoCRSDataCollator(processor)(
+            [
+                {
+                    "context": "hello",
+                    "target_item_id": 1,
+                    "response": "reply",
+                    "hypergraphs": {
+                        "txt": HypergraphData.from_hyperedges("txt", [(0, [1])])
+                    },
+                },
+                {
+                    "context": "hello",
+                    "target_item_id": 0,
+                    "response": "reply",
+                    "hypergraphs": {
+                        "txt": HypergraphData.from_hyperedges("txt", [(2, [0])])
+                    },
+                },
+            ]
+        )
+
+        output = model(**batch)
+        expected = (
+            config.beta * output.rec_loss
+            + (1.0 - config.beta) * output.conv_loss
+            + config.grounding_weight * output.grounding_loss
+        )
+        self.assertTrue(torch.allclose(output.loss, expected))
+        self.assertGreater(float(output.grounding_loss), 0.0)
+        output.loss.backward()
+        self.assertIsNotNone(model.source_projector.weight.grad)
+        self.assertIsNotNone(model.hypergraph_encoders["txt"].layers[0].weight.grad)
+        with tempfile.TemporaryDirectory() as directory:
+            model.save_pretrained(directory)
+            reloaded = HoCRSModel.from_pretrained(directory)
+        self.assertTrue(reloaded.config.use_source_projector)
+        self.assertTrue(
+            torch.equal(model.source_projector.weight, reloaded.source_projector.weight)
+        )
+
+    def test_sa_sn_requires_trainable_source_projector(self) -> None:
+        with self.assertRaisesRegex(ValueError, "source projector"):
+            HoCRSConfig(
+                views=["txt"],
+                grounding_weight=1.0,
+                grounding_sa_sn_weight=1.0,
+                use_source_projector=False,
+            )
+
+    # END: Verify the v3 Grounding branch and shared source projector gradient path.
 
     def test_left_truncation_preserves_graphs_and_response_labels(self) -> None:
         processor = build_processor()

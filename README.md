@@ -1,5 +1,61 @@
 # HyProRec
 
+<!-- START: Document the v3 aligned-source and joint-Grounding pipeline. -->
+## v3 pipeline
+
+The `v3` branch separates raw multimodal alignment from CRS training so raw
+image, audio, and video arrays are not loaded in every recommendation step.
+
+1. Four trainable pretrained source encoders and modality-specific linear heads
+   map catalogue items into one normalized space. Training averages symmetric
+   multi-positive InfoNCE over every available modality pair.
+2. The best alignment checkpoint exports fixed per-item modality tables.
+3. Enabled modality tables are fused with a masked normalized mean. The result
+   independently initializes the co-occurrence node table and Item Table.
+4. CRS jointly trains each semantic HGCN with anchor-to-source and
+   anchor-to-neighborhood Grounding losses. `co` receives CRS supervision only.
+5. An optional shared source projector transforms both semantic graph inputs and
+   Grounding targets. Its source-to-neighborhood term is disabled when the
+   projector is absent.
+
+The CRS objective is
+
+$$
+\mathcal{L}=\beta\mathcal{L}_{rec}+(1-\beta)\mathcal{L}_{conv}
++\lambda_g\mathcal{L}_{ground}.
+$$
+
+Run the stages in order:
+
+```bash
+torchrun --nproc-per-node=4 -m hyprorec.scripts.align \
+  --config configs/redial/v3/alignment.yaml
+
+hyprorec-export-aligned \
+  --checkpoint outputs/redial/v3/alignment \
+  --dataset-dir data/lhf-redial \
+  --output-dir data/lhf-redial/embeddings_v3
+
+hyprorec-prepare-content-table \
+  --embedding-dir data/lhf-redial/embeddings_v3 \
+  --output data/lhf-redial/content_tables_v3/full.pt \
+  --modality txt img ado vdo
+
+hyprorec-prepare-hyperedges \
+  --dataset-dir data/lhf-redial \
+  --embedding-dir data/lhf-redial/embeddings_v3 \
+  --output data/lhf-redial/hyperedge_table_v3.json --topk 50
+
+torchrun --nproc-per-node=4 -m hyprorec.scripts.train \
+  --config configs/redial/v3/full.yaml
+```
+
+The v3 folder also contains explicit recipes for no Grounding, no hypergraph,
+direct graph projection, no soft prompt, random Item Table initialization, and
+the trainable source projector. The direct-projection and no-hypergraph recipes
+set `grounding_weight: 0` because no encoded semantic anchor exists to ground.
+<!-- END: Document the v3 aligned-source and joint-Grounding pipeline. -->
+
 HyProRec is the clean implementation of the first end-to-end HoCRS model. It
 uses one dialogue co-occurrence hypergraph and up to four modality-similarity
 hypergraphs (`txt`, `img`, `ado`, and `vdo`) as prompts for an optional causal

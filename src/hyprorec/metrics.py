@@ -86,7 +86,17 @@ def recommendation_metrics(
 
 
 def preprocess_logits_for_metrics(logits, _labels):
-    lm_logits, rec_scores, rec_loss, conv_loss = logits
+    # START: Preserve the established metric tuple and append joint Grounding.
+    (
+        lm_logits,
+        rec_scores,
+        rec_loss,
+        conv_loss,
+        grounding_loss,
+        grounding_ga_sa_loss,
+        grounding_ga_sn_loss,
+        grounding_sa_sn_loss,
+    ) = logits[:8]
     topk = rec_scores.topk(min(50, rec_scores.size(-1)), dim=-1).indices
     token_predictions = lm_logits[:, :-1].argmax(dim=-1)
     batch_size = rec_scores.size(0)
@@ -95,16 +105,28 @@ def preprocess_logits_for_metrics(logits, _labels):
         token_predictions,
         rec_loss.reshape(1).expand(batch_size),
         conv_loss.reshape(1).expand(batch_size),
+        grounding_loss.reshape(1).expand(batch_size),
+        grounding_ga_sa_loss.reshape(1).expand(batch_size),
+        grounding_ga_sn_loss.reshape(1).expand(batch_size),
+        grounding_sa_sn_loss.reshape(1).expand(batch_size),
     )
+    # END: Preserve the established metric tuple and append joint Grounding.
 
 
 def build_compute_metrics(processor) -> callable:
     tokenizer = processor.tokenizer
 
     def compute_metrics(prediction: EvalPrediction) -> dict[str, float]:
-        recommendations, token_predictions, rec_losses, conv_losses = (
-            prediction.predictions
-        )
+        (
+            recommendations,
+            token_predictions,
+            rec_losses,
+            conv_losses,
+            grounding_losses,
+            grounding_ga_sa_losses,
+            grounding_ga_sn_losses,
+            grounding_sa_sn_losses,
+        ) = prediction.predictions
         lm_labels, rec_labels = prediction.label_ids
         shifted_labels = lm_labels[:, 1:]
         references = []
@@ -118,6 +140,10 @@ def build_compute_metrics(processor) -> callable:
         metrics = recommendation_metrics(recommendations.tolist(), rec_labels.tolist())
         metrics["rec_loss"] = float(rec_losses.mean())
         metrics["conv_loss"] = float(conv_losses.mean())
+        metrics["grounding_loss"] = float(grounding_losses.mean())
+        metrics["grounding_ga_sa_loss"] = float(grounding_ga_sa_losses.mean())
+        metrics["grounding_ga_sn_loss"] = float(grounding_ga_sn_losses.mean())
+        metrics["grounding_sa_sn_loss"] = float(grounding_sa_sn_losses.mean())
         for n in range(1, 5):
             metrics[f"bleu@{n}"] = _bleu(references, hypotheses, n)
             metrics[f"dist@{n}"] = _distinct(hypotheses, n)

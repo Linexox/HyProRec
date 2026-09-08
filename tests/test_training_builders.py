@@ -11,30 +11,34 @@ class FeatureTableBuilderTest(unittest.TestCase):
             for index, modality in enumerate(("txt", "img", "ado", "vdo"))
         }
 
-    # START: Verify fixed-width slot concatenation for modality ablations.
-    def test_content_table_uses_enabled_slots_without_changing_width(self) -> None:
+    # START: Verify normalized mean fusion in the shared aligned space.
+    def test_content_table_averages_enabled_aligned_modalities(self) -> None:
         full = build_content_table(self.tables, ["txt", "img", "ado", "vdo"])
         partial = build_content_table(self.tables, ["txt", "img"])
 
-        self.assertEqual(full.shape, (3, 16))
-        self.assertEqual(partial.shape, full.shape)
-        self.assertGreater(torch.count_nonzero(partial[:, :8]).item(), 0)
-        self.assertEqual(torch.count_nonzero(partial[:, 8:]).item(), 0)
+        self.assertEqual(full.shape, (3, 4))
+        self.assertEqual(partial.shape, (3, 4))
+        self.assertTrue(torch.allclose(full.norm(dim=-1), torch.ones(3)))
+        self.assertTrue(torch.allclose(partial.norm(dim=-1), torch.ones(3)))
 
-    def test_content_table_supports_different_encoder_widths(self) -> None:
-        tables = {
-            modality: torch.ones(3, width)
-            for modality, width in zip(("txt", "img", "ado", "vdo"), (2, 3, 4, 5))
+    def test_content_table_respects_modality_mask(self) -> None:
+        mask = {
+            modality: torch.tensor([True, modality == "txt", True])
+            for modality in self.tables
         }
 
-        content = build_content_table(tables, ["ado"])
+        content = build_content_table(self.tables, ["txt", "img"], mask)
+        expected = torch.nn.functional.normalize(self.tables["txt"][1:2], dim=-1)
 
-        self.assertEqual(content.shape, (3, 14))
-        self.assertEqual(torch.count_nonzero(content[:, :5]).item(), 0)
-        self.assertGreater(torch.count_nonzero(content[:, 5:9]).item(), 0)
-        self.assertEqual(torch.count_nonzero(content[:, 9:]).item(), 0)
+        self.assertTrue(torch.allclose(content[1:2], expected))
 
-    # END: Verify fixed-width slot concatenation for modality ablations.
+    def test_content_table_rejects_unaligned_widths(self) -> None:
+        tables = {"txt": torch.ones(3, 2), "img": torch.ones(3, 3)}
+
+        with self.assertRaisesRegex(ValueError, "same width"):
+            build_content_table(tables, ["txt", "img"])
+
+    # END: Verify normalized mean fusion in the shared aligned space.
 
 
 if __name__ == "__main__":

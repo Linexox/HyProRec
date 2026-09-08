@@ -51,6 +51,10 @@ hyprorec-prepare-hyperedges = "hyprorec.scripts.prepare_hyperedge_table:main"
 hyprorec-prepare-embeddings = "hyprorec.scripts.prepare_embeddings:main"
 # Modified: expose offline fixed-slot content table preparation.
 hyprorec-prepare-content-table = "hyprorec.scripts.prepare_content_table:main"
+# START: Expose the two explicit steps that produce v3 offline aligned features.
+hyprorec-align = "hyprorec.scripts.align:main"
+hyprorec-export-aligned = "hyprorec.scripts.export_aligned_embeddings:main"
+# END: Expose the two explicit steps that produce v3 offline aligned features.
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]

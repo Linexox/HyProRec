@@ -80,6 +80,16 @@ class HoCRSConfig(PretrainedConfig):
         num_items: int = 6924,
         item_dim: int = 768,
         use_hypergraph_encoder: bool = True,
+        # START: Serialize the v3 joint Grounding and Item Table choices.
+        use_source_projector: bool = False,
+        grounding_weight: float = 0.0,
+        grounding_ga_sa_weight: float = 1.0,
+        grounding_ga_sn_weight: float = 1.0,
+        grounding_sa_sn_weight: float = 0.0,
+        grounding_temperature: float = 0.07,
+        item_table_init: str = "aligned_content",
+        train_item_table: bool = True,
+        # END: Serialize the v3 joint Grounding and Item Table choices.
         recommendation_hidden_dim: int = 768,
         recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
@@ -109,6 +119,28 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("beta must be in [0, 1].")
         if num_items <= 0:
             raise ValueError("num_items must be positive.")
+        if item_table_init not in {"aligned_content", "random"}:
+            raise ValueError("Unknown Item Table initialization strategy.")
+        if grounding_weight < 0 or any(
+            weight < 0
+            for weight in (
+                grounding_ga_sa_weight,
+                grounding_ga_sn_weight,
+                grounding_sa_sn_weight,
+            )
+        ):
+            raise ValueError("Grounding weights must be non-negative.")
+        if grounding_temperature <= 0:
+            raise ValueError("grounding_temperature must be positive.")
+        semantic_views = set(views) - {"co"}
+        if grounding_weight > 0 and not semantic_views:
+            raise ValueError("Joint Grounding requires at least one semantic view.")
+        if grounding_weight > 0 and not use_hypergraph_encoder:
+            raise ValueError("Joint Grounding requires use_hypergraph_encoder=true.")
+        if grounding_sa_sn_weight > 0 and not use_source_projector:
+            raise ValueError(
+                "grounding_sa_sn_weight has no trainable effect without a source projector."
+            )
 
         self.views = views
         self.co_hypergraph_config = _hypergraph_config(co_hypergraph_config)
@@ -119,6 +151,14 @@ class HoCRSConfig(PretrainedConfig):
         self.num_items = num_items
         self.item_dim = item_dim
         self.use_hypergraph_encoder = use_hypergraph_encoder
+        self.use_source_projector = use_source_projector
+        self.grounding_weight = grounding_weight
+        self.grounding_ga_sa_weight = grounding_ga_sa_weight
+        self.grounding_ga_sn_weight = grounding_ga_sn_weight
+        self.grounding_sa_sn_weight = grounding_sa_sn_weight
+        self.grounding_temperature = grounding_temperature
+        self.item_table_init = item_table_init
+        self.train_item_table = train_item_table
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_dropout = recommendation_dropout
         self.recommendation_temperature = recommendation_temperature
