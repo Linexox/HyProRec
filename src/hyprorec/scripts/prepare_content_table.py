@@ -53,9 +53,9 @@ def build_content_table(
         )
         content[valid] += F.normalize(table[valid].float(), dim=-1)
         count[valid] += 1
-    if (count == 0).any():
-        raise ValueError("Some items have no enabled modality content.")
-    return F.normalize(content / count, dim=-1)
+    # START: Preserve a neutral zero row when an item lacks every enabled modality.
+    return F.normalize(content / count.clamp_min(1), dim=-1)
+    # END: Preserve a neutral zero row when an item lacks every enabled modality.
     # END: Fuse aligned modalities by a masked spherical mean, not concatenation.
 
 

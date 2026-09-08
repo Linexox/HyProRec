@@ -32,6 +32,17 @@ class FeatureTableBuilderTest(unittest.TestCase):
 
         self.assertTrue(torch.allclose(content[1:2], expected))
 
+    # START: A strict single-modality ablation must not impute another modality.
+    def test_content_table_keeps_missing_items_zero(self) -> None:
+        mask = {"img": torch.tensor([False, True, True])}
+
+        content = build_content_table({"img": self.tables["img"]}, ["img"], mask)
+
+        self.assertTrue(torch.equal(content[0], torch.zeros(4)))
+        self.assertAlmostEqual(float(content[1].norm()), 1.0, places=6)
+
+    # END: A strict single-modality ablation must not impute another modality.
+
     def test_content_table_rejects_unaligned_widths(self) -> None:
         tables = {"txt": torch.ones(3, 2), "img": torch.ones(3, 3)}
 
