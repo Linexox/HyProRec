@@ -1,4 +1,4 @@
-"""Lightweight Grounding model for offline multimodal node features."""
+"""Ground offline graph features against trainable raw-modality encoders."""
 
 from __future__ import annotations
 
@@ -6,15 +6,58 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 from transformers import PreTrainedModel
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    MPNetConfig,
+    ViTConfig,
+    VideoMAEConfig,
+    Wav2Vec2Config,
+)
 from transformers.modeling_outputs import ModelOutput
 
 from .configuration_grounding import HoCRSGroundingConfig
 from .configuration_hocrs import HoCRSHypergraphConfig
 from .losses import multi_positive_contrastive_loss
 from .modeling_hocrs import HypergraphEncoder
+
+
+# START: Match HoCRS2's randomly initialized lightweight source encoders.
+def build_source_config(view: str):
+    common = dict(
+        hidden_size=256,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        intermediate_size=1024,
+    )
+    if view == "txt":
+        return MPNetConfig(**common, max_position_embeddings=64)
+    if view == "img":
+        return ViTConfig(**common, image_size=224, patch_size=16, num_channels=3)
+    if view == "vdo":
+        return VideoMAEConfig(
+            **common,
+            image_size=224,
+            patch_size=16,
+            num_channels=3,
+            num_frames=16,
+            tubelet_size=2,
+        )
+    if view == "ado":
+        common["num_hidden_layers"] = 2
+        return Wav2Vec2Config(
+            **common,
+            conv_dim=[64] * 4,
+            conv_stride=[5, 4, 4, 4],
+            conv_kernel=[10, 3, 3, 3],
+            num_conv_pos_embedding_groups=4,
+        )
+    raise ValueError(f"Unsupported source modality: {view}")
+
+
+# END: Match HoCRS2's randomly initialized lightweight source encoders.
 
 
 @dataclass
@@ -28,6 +71,14 @@ class HoCRSGroundingOutput(ModelOutput):
 class HoCRSGroundingModel(PreTrainedModel):
     config_class = HoCRSGroundingConfig
     base_model_prefix = "hypergraph_encoders"
+    accepts_loss_kwargs = False  # Modified: Trainer must normalize micro-batch means.
+
+    # START: Trainer restores best checkpoints with current state_dict names.
+    def save_pretrained(self, save_directory, **kwargs):
+        kwargs.setdefault("save_original_format", False)
+        return super().save_pretrained(save_directory, **kwargs)
+
+    # END: Trainer restores best checkpoints with current state_dict names.
 
     def __init__(self, config: HoCRSGroundingConfig) -> None:
         super().__init__(config)
@@ -43,18 +94,36 @@ class HoCRSGroundingModel(PreTrainedModel):
                 dropout=config.dropout,
             )
             self.hypergraph_encoders[view] = HypergraphEncoder(graph_config)
-            self.source_encoders[view] = nn.Sequential(
-                nn.Linear(input_dim, config.output_dim),
-                nn.GELU(),
-                nn.Linear(config.output_dim, config.output_dim),
-            )
+            # START: Source supervision consumes raw modalities, not graph embeddings.
+            if view in config.source_configs:
+                source_dict = dict(config.source_configs[view])
+                source_config = AutoConfig.for_model(
+                    source_dict.pop("model_type"), **source_dict
+                )
+            else:
+                source_config = build_source_config(view)
+            if source_config.hidden_size != config.output_dim:
+                raise ValueError(
+                    "Graph output and source hidden dimensions must match."
+                )
+            config.source_configs[view] = source_config.to_dict()
+            self.source_encoders[view] = AutoModel.from_config(source_config)
+            # END: Source supervision consumes raw modalities, not graph embeddings.
         self.post_init()
+
+    # START: Keep HoCRS2 pooling and normalize only inside the contrastive loss.
+    def encode_source(self, view, source_data):
+        output = self.source_encoders[view](**source_data).last_hidden_state
+        return output[:, 0] if view in {"txt", "img"} else output.mean(dim=1)
+
+    # END: Keep HoCRS2 pooling and normalize only inside the contrastive loss.
 
     def _view_loss(
         self,
         view: str,
         node_features: torch.Tensor,
         graph: Mapping[str, torch.Tensor],
+        source_data: Mapping[str, torch.Tensor],  # Modified: raw modality batch.
     ) -> dict[str, torch.Tensor]:
         num_hyperedges = int(graph["edge_ptr"][-1].item())
         encoded = self.hypergraph_encoders[view](
@@ -62,7 +131,9 @@ class HoCRSGroundingModel(PreTrainedModel):
             graph["hyperedge_index"],
             num_hyperedges,
         )
-        source_features = F.normalize(self.source_encoders[view](node_features), dim=-1)
+        source_features = self.encode_source(view, source_data).to(
+            encoded.node_features.dtype
+        )  # Modified: average unnormalized source features.
         anchor_index = graph["hyperedge_anchor_index"]
         anchor_ids = graph["node_ids"].index_select(0, anchor_index)
         graph_anchors = encoded.node_features.index_select(0, anchor_index)
@@ -109,12 +180,17 @@ class HoCRSGroundingModel(PreTrainedModel):
         self,
         node_features: Mapping[str, torch.Tensor],
         hypergraphs: Mapping[str, Mapping[str, torch.Tensor]],
+        source_data: Mapping[
+            str, Mapping[str, torch.Tensor]
+        ],  # Modified: independent raw source branch.
         return_loss: bool = True,
         labels: torch.Tensor | None = None,
     ) -> HoCRSGroundingOutput:
         losses = {"ga_sa": [], "ga_sn": [], "sa_sn": []}
         for view in self.config.views:
-            values = self._view_loss(view, node_features[view], hypergraphs[view])
+            values = self._view_loss(
+                view, node_features[view], hypergraphs[view], source_data[view]
+            )  # Modified: preserve node ordering across branches.
             for name, value in values.items():
                 losses[name].append(value)
         zero = next(iter(node_features.values())).sum() * 0.0

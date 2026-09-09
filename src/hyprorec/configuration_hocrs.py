@@ -78,7 +78,7 @@ class HoCRSConfig(PretrainedConfig):
         ado_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         vdo_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         num_items: int = 6924,
-        item_dim: int = 768,
+        item_dim: int = 2048,  # Modified: HoCRS2 random recommendation table width.
         use_hypergraph_encoder: bool = True,
         # START: Serialize the optional standalone Grounding checkpoint reference.
         grounding_checkpoint_path: str | None = None,
@@ -95,7 +95,7 @@ class HoCRSConfig(PretrainedConfig):
         # END: Serialize random Item Table initialization as the default CRS policy.
         train_item_table: bool = True,
         # END: Serialize the v3 joint Grounding and Item Table choices.
-        recommendation_hidden_dim: int = 768,
+        recommendation_hidden_dim: int = 2048,  # Modified: HoCRS2 recommendation MLP width.
         recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
         beta: float = 0.75,

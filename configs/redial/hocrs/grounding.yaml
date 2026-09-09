@@ -1,4 +1,5 @@
 model:
+  grounding_tokenizer_name_or_path: sentence-transformers/all-mpnet-base-v2 # Modified: HoCRS2 raw-text tokenizer.
   backbone_name_or_path: /data2/lhf/.MODEL/Qwen2.5-Omni-3B
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
@@ -21,11 +22,20 @@ training:
   output_dir: outputs/redial/hocrs/grounding
   do_train: true
   do_eval: true
-  per_device_train_batch_size: 32
-  per_device_eval_batch_size: 32
+  per_device_train_batch_size: 8 # Modified: HoCRS2 raw-source batch size.
+  per_device_eval_batch_size: 8 # Modified: HoCRS2 raw-source batch size.
   num_train_epochs: 5
   learning_rate: 0.0001
   weight_decay: 0.01
+  # START: Match HoCRS2's constant-rate AdamW without gradient clipping.
+  lr_scheduler_type: constant
+  max_grad_norm: 0.0
+  label_names: []
+  prediction_loss_only: true
+  ddp_find_unused_parameters: true
+  seed: 42
+  data_seed: 42
+  # END: Match HoCRS2's constant-rate AdamW without gradient clipping.
   bf16: true
   eval_strategy: epoch
   save_strategy: epoch

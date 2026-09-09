@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, Trainer  # Modified: backbone selection lives in the model module.
+from transformers import AutoTokenizer, Trainer, set_seed  # Modified: seed before constructing modules.
 from transformers.trainer_utils import get_last_checkpoint
 
 from ..arguments import DataArguments, ModelArguments
@@ -84,7 +84,13 @@ def _build_model(
         backbone_config=backbone.config,
         views=data_args.views,
         num_items=num_items,
-        item_dim=item_dim,
+        # START: Random recommendation tables use HoCRS2's recommendation width.
+        item_dim=(
+            model_args.recommendation_hidden_dim
+            if model_args.item_table_init == "random"
+            else item_dim
+        ),
+        # END: Random recommendation tables use HoCRS2's recommendation width.
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
         use_source_projector=model_args.use_source_projector,
@@ -161,6 +167,7 @@ def _save_experiment_provenance(
 def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
+    set_seed(training_args.seed)  # Modified: cover all newly initialized parameters.
 
     tokenizer = AutoTokenizer.from_pretrained(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(

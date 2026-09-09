@@ -223,6 +223,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
     config_class = HoCRSConfig
     base_model_prefix = "backbone"
     supports_gradient_checkpointing = True
+    accepts_loss_kwargs = False  # Modified: losses are micro-batch means, normalized by Trainer.
 
     def __init__(self, config: HoCRSConfig, backbone: nn.Module | None = None) -> None:
         super().__init__(config)

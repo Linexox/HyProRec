@@ -13,7 +13,7 @@ model:
   grounding_weight: 0.0
   item_table_init: random
   train_item_table: true
-  recommendation_hidden_dim: 768
+  recommendation_hidden_dim: 2048 # Modified: match HoCRS2 MLP and random item width.
   recommendation_dropout: 0.0
   recommendation_temperature: 0.07
 
