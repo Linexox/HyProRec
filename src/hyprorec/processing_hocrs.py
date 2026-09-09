@@ -30,6 +30,11 @@ def graph_end_token(view: str) -> str:
 class HoCRSProcessor(ProcessorMixin):
     """A tokenizer-only processor that serializes variable-size graph blocks."""
 
+    # START: Declare the single processor component required by Transformers.
+    attributes = ["tokenizer"]
+    tokenizer_class = ("PreTrainedTokenizerBase", "PreTrainedTokenizerFast")
+    # END: Declare the single processor component required by Transformers.
+
     def __init__(
         self,
         tokenizer,

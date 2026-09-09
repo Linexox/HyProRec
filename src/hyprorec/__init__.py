@@ -8,6 +8,8 @@ from .modeling_alignment import HoCRSAlignmentModel, HoCRSAlignmentOutput
 # END: Register the v3 alignment checkpoint with Transformers auto classes.
 from .configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
 from .modeling_hocrs import HoCRSModel, HoCRSOutput
+from .configuration_grounding import HoCRSGroundingConfig
+from .modeling_grounding import HoCRSGroundingModel, HoCRSGroundingOutput
 from .processing_hocrs import HoCRSProcessor
 
 AutoConfig.register(HoCRSConfig.model_type, HoCRSConfig, exist_ok=True)
@@ -18,6 +20,12 @@ AutoConfig.register(
 AutoModel.register(HoCRSAlignmentConfig, HoCRSAlignmentModel, exist_ok=True)
 # END: Enable standard AutoConfig/AutoModel loading for alignment checkpoints.
 AutoModelForCausalLM.register(HoCRSConfig, HoCRSModel, exist_ok=True)
+# START: Register the standalone Grounding checkpoint with Transformers.
+AutoConfig.register(
+    HoCRSGroundingConfig.model_type, HoCRSGroundingConfig, exist_ok=True
+)
+AutoModel.register(HoCRSGroundingConfig, HoCRSGroundingModel, exist_ok=True)
+# END: Register the standalone Grounding checkpoint with Transformers.
 
 
 __all__ = [
@@ -31,4 +39,7 @@ __all__ = [
     "HoCRSModel",
     "HoCRSOutput",
     "HoCRSProcessor",
+    "HoCRSGroundingConfig",
+    "HoCRSGroundingModel",
+    "HoCRSGroundingOutput",
 ]

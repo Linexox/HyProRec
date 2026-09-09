@@ -42,7 +42,6 @@ def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
 
 
 def _load_content_table(data_args: DataArguments) -> torch.Tensor:
-    # START: Keep multimodal fusion entirely in the offline preparation stage.
     table = torch.load(
         data_args.content_table_path,
         map_location="cpu",
@@ -50,7 +49,6 @@ def _load_content_table(data_args: DataArguments) -> torch.Tensor:
     ).float()
     if table.ndim != 2:
         raise ValueError("The content initialization table must be two-dimensional.")
-    # END: Keep multimodal fusion entirely in the offline preparation stage.
     return table
 
 
@@ -65,7 +63,6 @@ def _build_model(
     backbone.resize_token_embeddings(len(processor.tokenizer))
 
     token_ids = processor.get_token_id_map()
-    # START: Infer each view width from its prepared table.
     num_items, item_dim = content_table.shape
     if any(table.size(0) != num_items for table in modality_tables.values()):
         raise ValueError("Content and modality tables contain different item counts.")
@@ -83,14 +80,13 @@ def _build_model(
         )
         for view in data_args.views
     }
-    # END: Infer each view width from its prepared table.
     config = HoCRSConfig(
         backbone_config=backbone.config,
         views=data_args.views,
         num_items=num_items,
         item_dim=item_dim,
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
-        # START: Pass the v3 joint Grounding and Item Table choices into checkpoints.
+        grounding_checkpoint_path=model_args.grounding_checkpoint_path,
         use_source_projector=model_args.use_source_projector,
         grounding_weight=model_args.grounding_weight,
         grounding_ga_sa_weight=model_args.grounding_ga_sa_weight,
@@ -99,10 +95,9 @@ def _build_model(
         grounding_temperature=model_args.grounding_temperature,
         item_table_init=model_args.item_table_init,
         train_item_table=model_args.train_item_table,
-        # END: Pass the v3 joint Grounding and Item Table choices into checkpoints.
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_dropout=model_args.recommendation_dropout,
-        recommendation_temperature=model_args.recommendation_temperature,
+        recommendation_temperature=model_args.recommendatiokn_temperature,
         beta=model_args.beta,
         num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
         freeze_backbone=model_args.freeze_backbone,
@@ -115,7 +110,8 @@ def _build_model(
         **token_ids,
     )
     model = HoCRSModel(config, backbone=backbone)
-    # START: Initialize co nodes and items from independent copies of one content base.
+    if model_args.grounding_checkpoint_path:
+        model.load_grounding_checkpoint(model_args.grounding_checkpoint_path)
     feature_tables = dict(modality_tables)
     if "co" in data_args.views:
         feature_tables["co"] = content_table
@@ -125,7 +121,6 @@ def _build_model(
             content_table if model_args.item_table_init == "aligned_content" else None
         ),
     )
-    # END: Initialize co nodes and items from independent copies of one content base.
     return model
 
 
@@ -221,7 +216,14 @@ def main() -> None:
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=HoCRSDataCollator(processor, max_length=data_args.max_length),
+        # START: Pass explicit history and response budgets to the CRS collator.
+        data_collator=HoCRSDataCollator(
+            processor,
+            max_length=data_args.max_length,
+            max_history_tokens=data_args.max_history_tokens,
+            max_response_tokens=data_args.max_response_tokens,
+        ),
+        # END: Pass explicit history and response budgets to the CRS collator.
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=processor,

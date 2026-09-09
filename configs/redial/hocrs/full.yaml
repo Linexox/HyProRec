@@ -1,4 +1,3 @@
-# START: Qwen v3 co-occurrence plus image-view experiment.
 model:
   backbone_name_or_path: /data2/lhf/.MODEL/Qwen2.5-Omni-3B
   freeze_backbone: true
@@ -10,13 +9,9 @@ model:
   hypergraph_num_layers: 3
   hypergraph_dropout: 0.0
   use_hypergraph_encoder: true
-  use_source_projector: false
-  grounding_weight: 1.0
-  grounding_ga_sa_weight: 1.0
-  grounding_ga_sn_weight: 1.0
-  grounding_sa_sn_weight: 0.0
-  grounding_temperature: 0.07
-  item_table_init: aligned_content
+  grounding_checkpoint_path: outputs/redial/hocrs/grounding
+  grounding_weight: 0.0
+  item_table_init: random
   train_item_table: true
   recommendation_hidden_dim: 768
   recommendation_dropout: 0.0
@@ -26,8 +21,8 @@ data:
   dataset_path: data/lhf-redial
   hyperedge_table_path: data/lhf-redial/hyperedge_table_v3.json
   embeddings_dir_name: embeddings_v3
-  content_table_path: data/lhf-redial/content_tables_v3/img.pt
-  views: [co, img]
+  content_table_path: data/lhf-redial/content_tables_v3/full.pt
+  views: [txt, img, ado, vdo]
   topk: 3
   khop: 2
   max_length: 1024
@@ -35,7 +30,7 @@ data:
   max_response_tokens: 64
 
 training:
-  output_dir: outputs/redial/v3/co-img
+  output_dir: outputs/redial/hocrs/full
   do_train: true
   do_eval: true
   do_predict: false
@@ -45,7 +40,6 @@ training:
   num_train_epochs: 8
   learning_rate: 0.00005
   weight_decay: 0.0
-  warmup_steps: 0.1
   bf16: true
   gradient_checkpointing: true
   gradient_checkpointing_kwargs:
@@ -59,10 +53,7 @@ training:
   greater_is_better: false
   save_total_limit: 2
   report_to: wandb
-  run_name: co-img
+  run_name: hocrs-full
   seed: 42
   data_seed: 42
   dataloader_num_workers: 4
-  dp_replicate_size: 1
-  dp_shard_size: 1
-# END: Qwen v3 co-occurrence plus image-view experiment.

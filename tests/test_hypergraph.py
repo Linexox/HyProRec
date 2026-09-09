@@ -11,30 +11,43 @@ from hyprorec.scripts.prepare_hyperedge_table import compute_cooccurrence_neighb
 
 
 class HypergraphTest(unittest.TestCase):
-    # START: Verify unique-node budgeting and whole-edge early termination.
+    # START: Verify the 120-node budget and whole-edge early termination.
     def test_node_limit_accepts_overlap_and_stops_at_first_overflow(self) -> None:
         rows = [[i] for i in range(130)]
-        rows[124] = [124, 0, 1, 2]
-        rows[125] = [125, 126, 127, 128]
+        for anchor_id in range(8):
+            start = 8 + anchor_id * 14
+            rows[anchor_id] = [anchor_id, *range(start, start + 14)]
         table = HypergraphTable({"co": rows})
-        graph = table.build_local(list(range(126)) + [129], "co", topk=3, khop=2)
+        graph = table.build_local(list(range(8)), "co", topk=14, khop=1)
 
-        self.assertEqual(graph.num_nodes, 125)
-        self.assertEqual(graph.num_hyperedges, 125)
-        self.assertEqual(graph.node_ids.tolist(), list(range(125)))
-        self.assertEqual(int((graph.hyperedge_index[1] == 124).sum()), 4)
+        self.assertEqual(graph.num_nodes, 120)
+        self.assertEqual(graph.num_hyperedges, 8)
+        self.assertEqual(int((graph.hyperedge_index[1] == 7).sum()), 15)
 
     def test_node_limit_does_not_partially_insert_an_edge(self) -> None:
-        rows = [[i] for i in range(128)]
-        rows[124] = [124, 125, 126, 127]
+        rows = [[i] for i in range(130)]
+        for anchor_id in range(8):
+            start = 8 + anchor_id * 15
+            rows[anchor_id] = [anchor_id, *range(start, start + 15)]
         table = HypergraphTable({"txt": rows})
-        graph = table.build_local(list(range(126)), "txt", topk=3, khop=2)
+        graph = table.build_local(list(range(8)), "txt", topk=15, khop=1)
 
-        self.assertEqual(graph.num_nodes, 124)
-        self.assertEqual(graph.num_hyperedges, 124)
-        self.assertNotIn(124, graph.node_ids.tolist())
+        self.assertEqual(graph.num_nodes, 112)
+        self.assertEqual(graph.num_hyperedges, 7)
+        self.assertNotIn(0, graph.node_ids.tolist())
 
-    # END: Verify unique-node budgeting and whole-edge early termination.
+    # END: Verify the 120-node budget and whole-edge early termination.
+
+    # START: Verify that recent unique history items become BFS roots.
+    def test_local_retrieval_uses_recent_unique_anchors(self) -> None:
+        table = HypergraphTable(
+            {"txt": [[item_id, 0] for item_id in range(12)]}
+        )
+        graph = table.build_local(list(range(10)), "txt", topk=0, khop=1)
+
+        self.assertEqual(graph.node_ids.tolist(), list(range(9, 1, -1)))
+
+    # END: Verify that recent unique history items become BFS roots.
 
     def test_cooccurrence_uses_unique_items_per_training_dialogue(self) -> None:
         conversations = [

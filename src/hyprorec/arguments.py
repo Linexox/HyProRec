@@ -22,16 +22,15 @@ class ModelArguments:
     hypergraph_num_layers: int = 3
     hypergraph_dropout: float = 0.0
     use_hypergraph_encoder: bool = True
-    # START: Configure joint v3 Grounding without changing the graph architecture.
+    grounding_checkpoint_path: str | None = None
     use_source_projector: bool = False
     grounding_weight: float = 0.0
     grounding_ga_sa_weight: float = 1.0
     grounding_ga_sn_weight: float = 1.0
     grounding_sa_sn_weight: float = 0.0
     grounding_temperature: float = 0.07
-    item_table_init: str = "aligned_content"
+    item_table_init: str = "random"
     train_item_table: bool = True
-    # END: Configure joint v3 Grounding without changing the graph architecture.
     recommendation_hidden_dim: int = 768
     recommendation_dropout: float = 0.0
     recommendation_temperature: float = 0.07
@@ -50,11 +49,17 @@ class ModelArguments:
             raise ValueError("Grounding weights must be non-negative.")
         if self.grounding_temperature <= 0:
             raise ValueError("grounding_temperature must be positive.")
-        if self.grounding_sa_sn_weight > 0 and not self.use_source_projector:
+        # START: The standalone Grounding stage has its own trainable source encoder.
+        if (
+            self.grounding_weight > 0
+            and self.grounding_sa_sn_weight > 0
+            and not self.use_source_projector
+        ):
             raise ValueError(
                 "grounding_sa_sn_weight has no trainable effect without "
                 "use_source_projector."
             )
+        # END: The standalone Grounding stage has its own trainable source encoder.
 
 
 @dataclass
@@ -62,13 +67,13 @@ class DataArguments:
     dataset_path: str = "data/lhf-redial"
     hyperedge_table_path: str | None = None
     embeddings_dir_name: str = "embeddings"
-    # START: Load the offline content initialization instead of fusing at train time.
     content_table_path: str = "data/lhf-redial/embeddings/content_full.pt"
-    # END: Load the offline content initialization instead of fusing at train time.
     views: list[str] = field(default_factory=lambda: list(GRAPH_VIEWS))
     topk: int = 3
     khop: int = 2
-    max_length: int | None = None
+    max_length: int = 1024
+    max_history_tokens: int = 150
+    max_response_tokens: int = 64
 
     def __post_init__(self) -> None:
         self.views = list(dict.fromkeys(self.views))
@@ -77,7 +82,6 @@ class DataArguments:
             raise ValueError(f"Unknown graph views: {sorted(unknown_views)}")
 
 
-# START: Keep multimodal alignment in a dedicated, sectioned experiment config.
 @dataclass
 class AlignmentArguments:
     dataset_path: str = "data/lhf-redial"
@@ -101,9 +105,6 @@ class AlignmentArguments:
             raise ValueError("Alignment requires at least two modalities.")
         if not 0.0 < self.validation_ratio < 1.0:
             raise ValueError("validation_ratio must be in (0, 1).")
-
-
-# END: Keep multimodal alignment in a dedicated, sectioned experiment config.
 
 
 @dataclass

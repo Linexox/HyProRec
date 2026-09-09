@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 import torch
@@ -369,6 +370,33 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                     raise ValueError("The Item Table content initialization has an incompatible shape.")
                 self.recommendation_head.item_table.weight.copy_(content)
 
+    # START: Import only the HGCN modules from a standard Grounding checkpoint.
+    def load_grounding_checkpoint(self, path: str) -> None:
+        checkpoint = self._load_pretrained_state_dict(path)
+        for view, encoder in self.hypergraph_encoders.items():
+            prefix = f"hypergraph_encoders.{view}."
+            view_state = {
+                name.removeprefix(prefix): value
+                for name, value in checkpoint.items()
+                if name.startswith(prefix)
+            }
+            if not view_state:
+                raise ValueError(f"Grounding checkpoint has no '{view}' encoder.")
+            encoder.load_state_dict(view_state)
+            encoder.requires_grad_(False)
+        self.config.grounding_checkpoint_path = path
+
+    @staticmethod
+    def _load_pretrained_state_dict(path: str) -> dict[str, torch.Tensor]:
+        directory = Path(path)
+        safetensor_path = directory / "model.safetensors"
+        if safetensor_path.exists():
+            from safetensors.torch import load_file
+
+            return load_file(str(safetensor_path), device="cpu")
+        return torch.load(directory / "pytorch_model.bin", map_location="cpu")
+    # END: Import only the HGCN modules from a standard Grounding checkpoint.
+
     def get_input_embeddings(self) -> nn.Module:
         return self.backbone.get_input_embeddings()
 
@@ -574,6 +602,9 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
     ) -> HoCRSOutput:
         kwargs.pop("return_dict", None)
         kwargs.pop("output_hidden_states", None)
+        # START: Let GenerationMixin pass cached inputs without duplicating embeds.
+        kwargs.pop("inputs_embeds", None)
+        # END: Let GenerationMixin pass cached inputs without duplicating embeds.
         inputs_embeds = self.get_input_embeddings()(input_ids)
         is_cached_step = _cache_has_content(past_key_values)
         zero = inputs_embeds.sum() * 0.0

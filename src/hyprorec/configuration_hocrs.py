@@ -80,6 +80,9 @@ class HoCRSConfig(PretrainedConfig):
         num_items: int = 6924,
         item_dim: int = 768,
         use_hypergraph_encoder: bool = True,
+        # START: Serialize the optional standalone Grounding checkpoint reference.
+        grounding_checkpoint_path: str | None = None,
+        # END: Serialize the optional standalone Grounding checkpoint reference.
         # START: Serialize the v3 joint Grounding and Item Table choices.
         use_source_projector: bool = False,
         grounding_weight: float = 0.0,
@@ -87,7 +90,9 @@ class HoCRSConfig(PretrainedConfig):
         grounding_ga_sn_weight: float = 1.0,
         grounding_sa_sn_weight: float = 0.0,
         grounding_temperature: float = 0.07,
-        item_table_init: str = "aligned_content",
+        # START: Serialize random Item Table initialization as the default CRS policy.
+        item_table_init: str = "random",
+        # END: Serialize random Item Table initialization as the default CRS policy.
         train_item_table: bool = True,
         # END: Serialize the v3 joint Grounding and Item Table choices.
         recommendation_hidden_dim: int = 768,
@@ -151,6 +156,7 @@ class HoCRSConfig(PretrainedConfig):
         self.num_items = num_items
         self.item_dim = item_dim
         self.use_hypergraph_encoder = use_hypergraph_encoder
+        self.grounding_checkpoint_path = grounding_checkpoint_path
         self.use_source_projector = use_source_projector
         self.grounding_weight = grounding_weight
         self.grounding_ga_sa_weight = grounding_ga_sa_weight
