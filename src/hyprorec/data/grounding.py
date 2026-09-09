@@ -67,6 +67,7 @@ class HoCRSGroundingCollator:
                 "node_features": node_features,
                 "hypergraphs": hypergraphs,
                 "return_loss": True,
+                "labels": torch.zeros(len(samples), dtype=torch.long),
             }
         )
 
