@@ -109,6 +109,7 @@ class HoCRSGroundingModel(PreTrainedModel):
         self,
         node_features: Mapping[str, torch.Tensor],
         hypergraphs: Mapping[str, Mapping[str, torch.Tensor]],
+        return_loss: bool = True,
     ) -> HoCRSGroundingOutput:
         losses = {"ga_sa": [], "ga_sn": [], "sa_sn": []}
         for view in self.config.views:
