@@ -11,8 +11,8 @@ model:
 
 data:
   dataset_path: data/lhf-redial
-  hyperedge_table_path: data/lhf-redial/hyperedge_table_v3.json
-  embeddings_dir_name: embeddings_v3
+  hyperedge_table_path: data/lhf-redial/hyperedge_table_hocrs.json
+  embeddings_dir_name: embeddings_hocrs
   views: [txt, img, ado, vdo]
   topk: 3
   khop: 2
