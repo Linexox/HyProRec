@@ -1,0 +1,48 @@
+# START: Isolated HoCRS2 Grounding/embedding transfer; same HyProRec CRS recipe.
+model:
+  backbone_name_or_path: /data2/lhf/.MODEL/Qwen2.5-Omni-3B
+  freeze_backbone: true
+  beta: 0.75
+  num_soft_prompt_tokens: 10
+  hypergraph_hidden_dim: 1024
+  hypergraph_output_dim: 256
+  hypergraph_num_layers: 3
+  use_hypergraph_encoder: true
+  grounding_checkpoint_path: outputs/redial/hocrs/grounding-from-hocrs2
+  grounding_weight: 0.0
+  item_table_init: random
+  train_item_table: true
+  recommendation_hidden_dim: 2048
+
+data:
+  dataset_path: data/hocrs2_redial
+  hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
+  embeddings_dir_name: embeddings
+  content_table_path: data/hocrs2_redial/embeddings/vdo_embeddings.pt
+  views: [vdo]
+  topk: 3
+  khop: 2
+  max_length: 1024
+  max_history_tokens: 150
+  max_response_tokens: 64
+
+training:
+  output_dir: outputs/redial/hocrs/only-vdo-hocrs2
+  do_train: true
+  do_eval: true
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  num_train_epochs: 8
+  learning_rate: 0.00005
+  bf16: true
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs: {use_reentrant: false}
+  eval_strategy: epoch
+  save_strategy: epoch
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  report_to: wandb
+  run_name: only-vdo
+# END: Isolated HoCRS2 Grounding/embedding transfer; same HyProRec CRS recipe.

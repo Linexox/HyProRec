@@ -371,7 +371,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                     raise ValueError("The Item Table content initialization has an incompatible shape.")
                 self.recommendation_head.item_table.weight.copy_(content)
 
-    # START: Import only the HGCN modules from a standard Grounding checkpoint.
+    # START: Load frozen towers and optional HoCRS2 projector initialization.
     def load_grounding_checkpoint(self, path: str) -> None:
         checkpoint = self._load_pretrained_state_dict(path)
         for view, encoder in self.hypergraph_encoders.items():
@@ -385,6 +385,14 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 raise ValueError(f"Grounding checkpoint has no '{view}' encoder.")
             encoder.load_state_dict(view_state)
             encoder.requires_grad_(False)
+            projector_prefix = f"hypergraph_projectors.{view}."
+            projector_state = {
+                name.removeprefix(projector_prefix): value
+                for name, value in checkpoint.items()
+                if name.startswith(projector_prefix)
+            }
+            if projector_state:
+                self.hypergraph_projectors[view].load_state_dict(projector_state)
         self.config.grounding_checkpoint_path = path
 
     @staticmethod
@@ -396,7 +404,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
 
             return load_file(str(safetensor_path), device="cpu")
         return torch.load(directory / "pytorch_model.bin", map_location="cpu")
-    # END: Import only the HGCN modules from a standard Grounding checkpoint.
+    # END: Load frozen towers and optional HoCRS2 projector initialization.
 
     def get_input_embeddings(self) -> nn.Module:
         return self.backbone.get_input_embeddings()
