@@ -97,7 +97,7 @@ def _build_model(
         train_item_table=model_args.train_item_table,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_dropout=model_args.recommendation_dropout,
-        recommendation_temperature=model_args.recommendatiokn_temperature,
+        recommendation_temperature=model_args.recommendation_temperature,
         beta=model_args.beta,
         num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
         freeze_backbone=model_args.freeze_backbone,
