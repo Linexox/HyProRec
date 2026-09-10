@@ -22,7 +22,7 @@ data:
   views: [vdo]
   topk: 3
   khop: 2
-  max_length: 1024
+  max_length: 4096
   max_history_tokens: 150
   max_response_tokens: 64
 
