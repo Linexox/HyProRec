@@ -8,7 +8,7 @@ model:
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
   use_hypergraph_encoder: true
-  grounding_checkpoint_path: outputs/redial/hocrs/grounding-from-hocrs2-wo-co
+  grounding_checkpoint_path: outputs/redial/hocrs/grounding-wo-co-hyprorec
   grounding_weight: 0.0
   item_table_init: random
   train_item_table: true
@@ -27,7 +27,7 @@ data:
   max_response_tokens: 64
 
 training:
-  output_dir: outputs/redial/hocrs/only-img-wo-co-max4096
+  output_dir: outputs/redial/hocrs/only-img-hygrounding-max4096
   do_train: true
   do_eval: true
   per_device_train_batch_size: 1
@@ -46,5 +46,5 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   report_to: wandb
-  run_name: only-img-wo-co-max4096
+  run_name: only-img-hygrounding-max4096
 # END: Isolated HoCRS2 Grounding/embedding transfer; same HyProRec CRS recipe.
