@@ -132,7 +132,8 @@ class HypergraphTable:
 
         anchors = [anchor_ids] if isinstance(anchor_ids, int) else list(anchor_ids)
         assert anchors, "At least one anchor id is required."
-        frontier = list(dict.fromkeys(reversed(anchors)))[:16]
+        # Modified: let the 120-node graph budget, rather than a small anchor cap, bound retrieval.
+        frontier = list(dict.fromkeys(reversed(anchors)))[:256]
         visited: set[int] = set()
         hyperedges: list[tuple[int, list[int]]] = []
         selected_nodes: set[int] = set()

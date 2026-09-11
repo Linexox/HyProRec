@@ -45,7 +45,7 @@ class HypergraphTest(unittest.TestCase):
         )
         graph = table.build_local(list(range(10)), "txt", topk=0, khop=1)
 
-        self.assertEqual(graph.node_ids.tolist(), list(range(9, 1, -1)))
+        self.assertEqual(graph.node_ids.tolist(), list(range(9, -1, -1)))
 
     # END: Verify that recent unique history items become BFS roots.
 
