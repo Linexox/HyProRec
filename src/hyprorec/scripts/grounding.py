@@ -25,7 +25,6 @@ from ..data.hypergraph import HypergraphTable
 from ..modeling_grounding import HoCRSGroundingModel, build_source_config
 
 
-# START: HoCRS2 applies AdamW weight decay to every trainable parameter.
 class GroundingTrainer(Trainer):
     def create_optimizer(self):
         if self.optimizer is None:
@@ -41,9 +40,6 @@ class GroundingTrainer(Trainer):
                 weight_decay=self.args.weight_decay,
             )
         return self.optimizer
-
-
-# END: HoCRS2 applies AdamW weight decay to every trainable parameter.
 
 
 def _load_feature_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
@@ -82,15 +78,12 @@ def main() -> None:
         Path(data_args.dataset_path) / "hyperedge_table.json"
     )
     table = HypergraphTable.from_json(table_path)
-    # START: Each modality gets its own optimizer and validation-selected best model.
     if (
         not training_args.do_train
         or not training_args.do_eval
         or not training_args.load_best_model_at_end
     ):
-        raise ValueError(
-            "Grounding requires training, validation, and load_best_model_at_end."
-        )
+        raise ValueError("Grounding requires training, validation, and load_best_model_at_end.")
     combined_state = {}
     selections = {}
     for view in views:
@@ -99,9 +92,7 @@ def main() -> None:
         view_config.views = (view,)
         tokenizer = None
         if view == "txt":
-            tokenizer = AutoTokenizer.from_pretrained(
-                model_args.grounding_tokenizer_name_or_path
-            )
+            tokenizer = AutoTokenizer.from_pretrained(model_args.grounding_tokenizer_name_or_path)
             source_config = build_source_config(view)
             source_config.vocab_size = len(tokenizer)
             view_config.source_configs[view] = source_config.to_dict()
@@ -115,7 +106,7 @@ def main() -> None:
         args.metric_for_best_model = "eval_loss"
         args.greater_is_better = False
         dataset = HoCRSGroundingDataset(
-            table, (view,), topk=data_args.topk, khop=data_args.khop
+            table, (view,),topk=data_args.topk, khop=data_args.khop
         )
         split = int(len(dataset) * 0.9)
         train_dataset, eval_dataset = torch.utils.data.random_split(
@@ -152,10 +143,11 @@ def main() -> None:
                 "checkpoint": trainer.state.best_model_checkpoint,
                 "eval_loss": trainer.state.best_metric,
             }
+            
             if "wandb" in args.report_to:
                 import wandb
-
                 wandb.finish()
+        
         trainer.accelerator.wait_for_everyone()
         is_main_process = trainer.is_world_process_zero()
         trainer.accelerator.free_memory()
@@ -172,7 +164,7 @@ def main() -> None:
         )
         training_args.label_names = []
         training_args.prediction_loss_only = True
-    # END: Each modality gets its own optimizer and validation-selected best model.
+
     if is_main_process:
         output_dir = Path(training_args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)

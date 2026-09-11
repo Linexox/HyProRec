@@ -24,7 +24,7 @@ class HoCRSGroundingConfig(PretrainedConfig):
         lambda_ga_sa: float = 1.0,
         lambda_ga_sn: float = 3.0,
         lambda_sa_sn: float = 3.0,
-        source_configs: dict[str, dict[str, Any]] | None = None,  # Modified: persist raw source architectures.
+        source_configs: dict[str, dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -40,7 +40,7 @@ class HoCRSGroundingConfig(PretrainedConfig):
         self.lambda_ga_sa = lambda_ga_sa
         self.lambda_ga_sn = lambda_ga_sn
         self.lambda_sa_sn = lambda_sa_sn
-        self.source_configs = dict(source_configs or {})  # Modified: reconstruct source encoders on load.
+        self.source_configs = dict(source_configs or {})
 
 
 __all__ = ["HoCRSGroundingConfig"]

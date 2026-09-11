@@ -279,6 +279,14 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                     persistent=True,
                 )
 
+        # START: learnable per-view scalar gates for CRS fusion.
+        self.view_gates = nn.ParameterDict(
+            {
+                view: nn.Parameter(torch.tensor(1.0))
+                for view in config.views
+            }
+        )
+        # END: learnable per-view scalar gates for CRS fusion.
         self.recommendation_head = HoCRSRecommendationHead(lm_hidden_size, config)
         self.recommendation_head.item_table.weight.requires_grad_(
             config.train_item_table
@@ -525,11 +533,12 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 raise ValueError(f"{view} node positions do not match encoder output.")
             if hyperedge_positions.size(0) != projected.hyperedge_features.size(0):
                 raise ValueError(f"{view} hyperedge positions do not match encoder output.")
+            gate = self.view_gates[view]
             result[node_positions[:, 0], node_positions[:, 1]] = (
-                projected.node_features.to(result.dtype)
+                (projected.node_features * gate).to(result.dtype)
             )
             result[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = (
-                projected.hyperedge_features.to(result.dtype)
+                (projected.hyperedge_features * gate).to(result.dtype)
             )
 
         zero = result.sum() * 0.0

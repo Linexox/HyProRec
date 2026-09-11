@@ -84,13 +84,11 @@ def _build_model(
         backbone_config=backbone.config,
         views=data_args.views,
         num_items=num_items,
-        # START: Random recommendation tables use HoCRS2's recommendation width.
-        item_dim=(
+        item_dim=(                                                          # ***** FIXME *****
             model_args.recommendation_hidden_dim
             if model_args.item_table_init == "random"
             else item_dim
         ),
-        # END: Random recommendation tables use HoCRS2's recommendation width.
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
         use_source_projector=model_args.use_source_projector,

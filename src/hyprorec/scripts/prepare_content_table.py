@@ -1,6 +1,5 @@
 """Create an offline content table from aligned modality embeddings."""
 
-# START: Build traceable Item Table and co-table initialization outside training.
 from __future__ import annotations
 
 import argparse
@@ -20,25 +19,23 @@ def build_content_table(
 ) -> torch.Tensor:
     enabled = set(enabled_modalities)
     unknown = enabled - set(MODALITIES)
+    missing = enabled - set(embedding_tables)
     if unknown:
         raise ValueError(f"Unknown modalities: {sorted(unknown)}")
     if not enabled:
         raise ValueError("At least one content modality must be enabled.")
-    missing = enabled - set(embedding_tables)
     if missing:
         raise ValueError(f"Missing embedding tables: {sorted(missing)}")
 
     selected_tables = {key: embedding_tables[key] for key in enabled_modalities}
     num_items = {table.size(0) for table in selected_tables.values()}
-    if len(num_items) != 1 or any(
-        table.ndim != 2 for table in selected_tables.values()
-    ):
-        raise ValueError("Embedding tables must be 2D and contain the same items.")
     widths = {table.size(1) for table in selected_tables.values()}
+    if len(num_items) != 1 or any(table.ndim != 2 for table in selected_tables.values()):
+        raise ValueError("Embedding tables must be 2D and contain the same items.")
     if len(widths) != 1:
         raise ValueError("Aligned embedding tables must have the same width.")
 
-    # START: Fuse aligned modalities by a masked spherical mean, not concatenation.
+
     count = next(iter(selected_tables.values())).new_zeros(
         (next(iter(num_items)), 1), dtype=torch.float32
     )
@@ -53,10 +50,7 @@ def build_content_table(
         )
         content[valid] += F.normalize(table[valid].float(), dim=-1)
         count[valid] += 1
-    # START: Preserve a neutral zero row when an item lacks every enabled modality.
     return F.normalize(content / count.clamp_min(1), dim=-1)
-    # END: Preserve a neutral zero row when an item lacks every enabled modality.
-    # END: Fuse aligned modalities by a masked spherical mean, not concatenation.
 
 
 def prepare_content_table(
@@ -87,7 +81,8 @@ def prepare_content_table(
                 "enabled_modalities": enabled_modalities,
                 "fusion": "masked_normalized_mean",
                 "source_shapes": {
-                    modality: list(table.shape) for modality, table in tables.items()
+                    modality: list(table.shape)
+                    for modality, table in tables.items()
                 },
                 "output_shape": list(content.shape),
                 "normalized": True,
@@ -115,4 +110,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-# END: Build traceable Item Table and co-table initialization outside training.

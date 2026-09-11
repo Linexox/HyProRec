@@ -78,24 +78,18 @@ class HoCRSConfig(PretrainedConfig):
         ado_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         vdo_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         num_items: int = 6924,
-        item_dim: int = 2048,  # Modified: HoCRS2 random recommendation table width.
+        item_dim: int = 2048,
         use_hypergraph_encoder: bool = True,
-        # START: Serialize the optional standalone Grounding checkpoint reference.
         grounding_checkpoint_path: str | None = None,
-        # END: Serialize the optional standalone Grounding checkpoint reference.
-        # START: Serialize the v3 joint Grounding and Item Table choices.
         use_source_projector: bool = False,
-        grounding_weight: float = 0.0,
+        grounding_weight: float = 0.0,                                                   # ***** FIXME *****
         grounding_ga_sa_weight: float = 1.0,
         grounding_ga_sn_weight: float = 1.0,
         grounding_sa_sn_weight: float = 0.0,
         grounding_temperature: float = 0.07,
-        # START: Serialize random Item Table initialization as the default CRS policy.
         item_table_init: str = "random",
-        # END: Serialize random Item Table initialization as the default CRS policy.
         train_item_table: bool = True,
-        # END: Serialize the v3 joint Grounding and Item Table choices.
-        recommendation_hidden_dim: int = 2048,  # Modified: HoCRS2 recommendation MLP width.
+        recommendation_hidden_dim: int = 2048,
         recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
         beta: float = 0.75,
@@ -118,6 +112,8 @@ class HoCRSConfig(PretrainedConfig):
         super().__init__(**kwargs)
         views = tuple(dict.fromkeys(views))
         unknown_views = set(views) - set(GRAPH_VIEWS)
+        semantic_views = set(views) - {"co"}
+        
         if unknown_views:
             raise ValueError(f"Unknown graph views: {sorted(unknown_views)}")
         if not 0.0 <= beta <= 1.0:
@@ -137,15 +133,12 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("Grounding weights must be non-negative.")
         if grounding_temperature <= 0:
             raise ValueError("grounding_temperature must be positive.")
-        semantic_views = set(views) - {"co"}
         if grounding_weight > 0 and not semantic_views:
             raise ValueError("Joint Grounding requires at least one semantic view.")
         if grounding_weight > 0 and not use_hypergraph_encoder:
             raise ValueError("Joint Grounding requires use_hypergraph_encoder=true.")
         if grounding_sa_sn_weight > 0 and not use_source_projector:
-            raise ValueError(
-                "grounding_sa_sn_weight has no trainable effect without a source projector."
-            )
+            raise ValueError("grounding_sa_sn_weight has no trainable effect without a source projector.")
 
         self.views = views
         self.co_hypergraph_config = _hypergraph_config(co_hypergraph_config)

@@ -136,7 +136,7 @@ class HypergraphTable:
         visited: set[int] = set()
         hyperedges: list[tuple[int, list[int]]] = []
         selected_nodes: set[int] = set()
-        max_nodes = 120
+        max_nodes = 12000                                                                       # ***** FIXME *****
 
         for _ in range(khop):
             next_frontier: list[int] = []

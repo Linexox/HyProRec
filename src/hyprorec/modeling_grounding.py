@@ -24,7 +24,6 @@ from .losses import multi_positive_contrastive_loss
 from .modeling_hocrs import HypergraphEncoder
 
 
-# START: Match HoCRS2's randomly initialized lightweight source encoders.
 def build_source_config(view: str):
     common = dict(
         hidden_size=256,
@@ -57,9 +56,6 @@ def build_source_config(view: str):
     raise ValueError(f"Unsupported source modality: {view}")
 
 
-# END: Match HoCRS2's randomly initialized lightweight source encoders.
-
-
 @dataclass
 class HoCRSGroundingOutput(ModelOutput):
     loss: torch.Tensor | None = None
@@ -73,12 +69,10 @@ class HoCRSGroundingModel(PreTrainedModel):
     base_model_prefix = "hypergraph_encoders"
     accepts_loss_kwargs = False  # Modified: Trainer must normalize micro-batch means.
 
-    # START: Trainer restores best checkpoints with current state_dict names.
     def save_pretrained(self, save_directory, **kwargs):
         kwargs.setdefault("save_original_format", False)
         return super().save_pretrained(save_directory, **kwargs)
 
-    # END: Trainer restores best checkpoints with current state_dict names.
 
     def __init__(self, config: HoCRSGroundingConfig) -> None:
         super().__init__(config)
@@ -94,7 +88,6 @@ class HoCRSGroundingModel(PreTrainedModel):
                 dropout=config.dropout,
             )
             self.hypergraph_encoders[view] = HypergraphEncoder(graph_config)
-            # START: Source supervision consumes raw modalities, not graph embeddings.
             if view in config.source_configs:
                 source_dict = dict(config.source_configs[view])
                 source_config = AutoConfig.for_model(
@@ -103,20 +96,18 @@ class HoCRSGroundingModel(PreTrainedModel):
             else:
                 source_config = build_source_config(view)
             if source_config.hidden_size != config.output_dim:
-                raise ValueError(
-                    "Graph output and source hidden dimensions must match."
-                )
+                raise ValueError("Graph output and source hidden dimensions must match.")
             config.source_configs[view] = source_config.to_dict()
             self.source_encoders[view] = AutoModel.from_config(source_config)
-            # END: Source supervision consumes raw modalities, not graph embeddings.
         self.post_init()
 
-    # START: Keep HoCRS2 pooling and normalize only inside the contrastive loss.
     def encode_source(self, view, source_data):
         output = self.source_encoders[view](**source_data).last_hidden_state
-        return output[:, 0] if view in {"txt", "img"} else output.mean(dim=1)
+        if view in {"txt", "img"}:
+            return output[:, 0]
+        else:
+            return output.mean(dim=1)
 
-    # END: Keep HoCRS2 pooling and normalize only inside the contrastive loss.
 
     def _view_loss(
         self,
@@ -131,11 +122,9 @@ class HoCRSGroundingModel(PreTrainedModel):
             graph["hyperedge_index"],
             num_hyperedges,
         )
-        source_features = self.encode_source(view, source_data).to(
-            encoded.node_features.dtype
-        )  # Modified: average unnormalized source features.
+        source_features = self.encode_source(view, source_data).to(encoded.node_features.dtype)
         anchor_index = graph["hyperedge_anchor_index"]
-        anchor_ids = graph["node_ids"].index_select(0, anchor_index)
+        anchor_ids = graph["node_ids"].index_select(0, anchor_index)        # global node IDs
         graph_anchors = encoded.node_features.index_select(0, anchor_index)
         source_anchors = source_features.index_select(0, anchor_index)
         node_index, edge_index = graph["hyperedge_index"]
@@ -143,16 +132,17 @@ class HoCRSGroundingModel(PreTrainedModel):
         is_neighbor = node_index.ne(anchor_per_incidence)
         neighbor_nodes = node_index[is_neighbor]
         neighbor_edges = edge_index[is_neighbor]
-        neighbor_sum = source_features.new_zeros(
-            (num_hyperedges, source_features.size(-1))
-        )
+        neighbor_sum = source_features.new_zeros((num_hyperedges, source_features.size(-1)))
         neighbor_sum.index_add_(0, neighbor_edges, source_features[neighbor_nodes])
         neighbor_count = torch.bincount(neighbor_edges, minlength=num_hyperedges)
         valid = neighbor_count > 0
         source_neighbors = neighbor_sum / neighbor_count.clamp_min(1).unsqueeze(-1)
         result: dict[str, torch.Tensor] = {}
         ga_sa = multi_positive_contrastive_loss(
-            graph_anchors, source_anchors, anchor_ids, self.config.temperature
+            graph_anchors,
+            source_anchors,
+            anchor_ids,
+            self.config.temperature
         )
         if ga_sa is not None:
             result["ga_sa"] = ga_sa
