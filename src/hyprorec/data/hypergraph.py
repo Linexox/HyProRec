@@ -132,11 +132,11 @@ class HypergraphTable:
 
         anchors = [anchor_ids] if isinstance(anchor_ids, int) else list(anchor_ids)
         assert anchors, "At least one anchor id is required."
-        frontier = list(dict.fromkeys(reversed(anchors)))[:8]
+        frontier = list(dict.fromkeys(reversed(anchors)))[:16]
         visited: set[int] = set()
         hyperedges: list[tuple[int, list[int]]] = []
         selected_nodes: set[int] = set()
-        max_nodes = 12000                                                                       # ***** FIXME *****
+        max_nodes = 120                                                                       # ***** FIXME *****
 
         for _ in range(khop):
             next_frontier: list[int] = []
