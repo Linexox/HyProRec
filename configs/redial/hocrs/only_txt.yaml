@@ -1,3 +1,4 @@
+# START: Isolated HoCRS2 Grounding/embedding transfer; same HyProRec CRS recipe.
 model:
   backbone_name_or_path: /data2/lhf/.MODEL/Qwen2.5-Omni-3B
   freeze_backbone: true
@@ -7,32 +8,35 @@ model:
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
   use_hypergraph_encoder: true
-  grounding_checkpoint_path: outputs/redial/hocrs/grounding
+  grounding_checkpoint_path: outputs/redial/hocrs/grounding-wo-co-hyprorec
   grounding_weight: 0.0
   item_table_init: random
   train_item_table: true
+  recommendation_hidden_dim: 2048
 
 data:
-  dataset_path: data/lhf-redial
-  hyperedge_table_path: data/lhf-redial/hyperedge_table_hocrs.json
-  embeddings_dir_name: embeddings_hocrs
-  content_table_path: data/lhf-redial/content_tables_v3/full.pt
+  dataset_path: data/hocrs2_redial
+  hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
+  embeddings_dir_name: embeddings
+  content_table_path: data/hocrs2_redial/embeddings/txt_embeddings.pt
   views: [txt]
   topk: 3
   khop: 2
-  max_length: 1024
-  max_history_tokens: 150
+  max_length: 4096
+  max_history_tokens: 4096
   max_response_tokens: 64
 
 training:
-  output_dir: outputs/redial/hocrs/only-txt
+  output_dir: outputs/redial/hocrs/only-txt-hygrounding-max4096
   do_train: true
   do_eval: true
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 2
   num_train_epochs: 8
-  learning_rate: 0.00005
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  lr_scheduler_type: constant
   bf16: true
   gradient_checkpointing: true
   gradient_checkpointing_kwargs: {use_reentrant: false}
@@ -42,4 +46,5 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   report_to: wandb
-  run_name: hocrs-only-txt
+  run_name: only-txt-hygrounding-max4096
+# END: Isolated HoCRS2 Grounding/embedding transfer; same HyProRec CRS recipe.

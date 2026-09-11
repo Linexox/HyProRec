@@ -1,5 +1,5 @@
 model:
-  grounding_tokenizer_name_or_path: sentence-transformers/all-mpnet-base-v2 # Modified: HoCRS2 raw-text tokenizer.
+  grounding_tokenizer_name_or_path: /data2/lhf/.MODEL/all-mpnet-base-v2 # local cached tokenizer.
   backbone_name_or_path: /data2/lhf/.MODEL/Qwen2.5-Omni-3B
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
@@ -12,22 +12,21 @@ model:
 
 data:
   dataset_path: data/lhf-redial
-  hyperedge_table_path: data/lhf-redial/hyperedge_table_hocrs.json
-  embeddings_dir_name: embeddings_hocrs
+  hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
+  embeddings_dir_name: embeddings
   views: [txt, img, ado, vdo]
   topk: 3
   khop: 2
 
 training:
-  output_dir: outputs/redial/hocrs/grounding
+  output_dir: outputs/redial/hocrs/grounding-wo-co-hyprorec
   do_train: true
   do_eval: true
-  per_device_train_batch_size: 8 # Modified: HoCRS2 raw-source batch size.
-  per_device_eval_batch_size: 8 # Modified: HoCRS2 raw-source batch size.
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
   num_train_epochs: 5
   learning_rate: 0.0001
   weight_decay: 0.01
-  # START: Match HoCRS2's constant-rate AdamW without gradient clipping.
   lr_scheduler_type: constant
   max_grad_norm: 0.0
   label_names: []
@@ -35,7 +34,6 @@ training:
   ddp_find_unused_parameters: true
   seed: 42
   data_seed: 42
-  # END: Match HoCRS2's constant-rate AdamW without gradient clipping.
   bf16: true
   eval_strategy: epoch
   save_strategy: epoch
@@ -45,4 +43,4 @@ training:
   save_total_limit: 2
   remove_unused_columns: false
   report_to: wandb
-  run_name: hocrs-grounding
+  run_name: hocrs-grounding-wo-co
