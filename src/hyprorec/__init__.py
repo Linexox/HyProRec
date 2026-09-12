@@ -7,7 +7,7 @@ from .configuration_alignment import HoCRSAlignmentConfig
 from .modeling_alignment import HoCRSAlignmentModel, HoCRSAlignmentOutput
 # END: Register the v3 alignment checkpoint with Transformers auto classes.
 from .configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
-from .modeling_hocrs import HoCRSModel, HoCRSOutput
+from .modeling_hocrs import GraphTokenMoE, HoCRSModel, HoCRSOutput
 from .configuration_grounding import HoCRSGroundingConfig
 from .modeling_grounding import HoCRSGroundingModel, HoCRSGroundingOutput
 from .processing_hocrs import HoCRSProcessor
@@ -38,6 +38,7 @@ __all__ = [
     "HoCRSHypergraphConfig",
     "HoCRSModel",
     "HoCRSOutput",
+    "GraphTokenMoE",
     "HoCRSProcessor",
     "HoCRSGroundingConfig",
     "HoCRSGroundingModel",

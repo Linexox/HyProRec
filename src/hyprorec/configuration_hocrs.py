@@ -92,6 +92,11 @@ class HoCRSConfig(PretrainedConfig):
         recommendation_hidden_dim: int = 2048,
         recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
+        use_moe: bool = False,
+        moe_num_experts: int = 2,
+        moe_hidden_dim: int = 512,
+        moe_router_temperature: float = 1.0,
+        moe_residual_scale_init: float = 1.0,
         beta: float = 0.75,
         num_soft_prompt_tokens: int = 10,
         freeze_backbone: bool = True,
@@ -133,6 +138,16 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("Grounding weights must be non-negative.")
         if grounding_temperature <= 0:
             raise ValueError("grounding_temperature must be positive.")
+        if moe_num_experts < 2:
+            raise ValueError("moe_num_experts must be at least 2.")
+        if moe_hidden_dim < 1:
+            raise ValueError("moe_hidden_dim must be positive.")
+        if moe_router_temperature <= 0:
+            raise ValueError("moe_router_temperature must be positive.")
+        if moe_residual_scale_init < 0:
+            raise ValueError("moe_residual_scale_init must be non-negative.")
+        if use_moe and "co" in views:
+            raise ValueError("The token MoE branch only supports txt/img/ado/vdo views.")
         if grounding_weight > 0 and not semantic_views:
             raise ValueError("Joint Grounding requires at least one semantic view.")
         if grounding_weight > 0 and not use_hypergraph_encoder:
@@ -161,6 +176,11 @@ class HoCRSConfig(PretrainedConfig):
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_dropout = recommendation_dropout
         self.recommendation_temperature = recommendation_temperature
+        self.use_moe = use_moe
+        self.moe_num_experts = moe_num_experts
+        self.moe_hidden_dim = moe_hidden_dim
+        self.moe_router_temperature = moe_router_temperature
+        self.moe_residual_scale_init = moe_residual_scale_init
         self.beta = beta
         self.num_soft_prompt_tokens = num_soft_prompt_tokens
         self.freeze_backbone = freeze_backbone

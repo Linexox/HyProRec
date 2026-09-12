@@ -84,6 +84,9 @@ class HoCRSOutput(ModelOutput):
     grounding_ga_sa_loss: torch.Tensor | None = None
     grounding_ga_sn_loss: torch.Tensor | None = None
     grounding_sa_sn_loss: torch.Tensor | None = None
+    moe_usage: torch.Tensor | None = None
+    moe_router_entropy: torch.Tensor | None = None
+    moe_view_usage: torch.Tensor | None = None
     # END: Expose the unweighted joint Grounding loss for evaluation logs.
     past_key_values: Any | None = None
     hidden_states: tuple[torch.Tensor, ...] | None = None
@@ -197,6 +200,66 @@ class HypergraphProjector(nn.Module):
         )
 
 
+class GraphTokenMoE(nn.Module):
+    """Dense token-level experts that add a residual to projected graph tokens."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        views: tuple[str, ...],
+        num_experts: int,
+        expert_hidden_size: int,
+        router_temperature: float,
+        residual_scale_init: float,
+    ) -> None:
+        super().__init__()
+        self.router_temperature = router_temperature
+        self.view_to_index = {view: index for index, view in enumerate(views)}
+        self.view_embeddings = nn.Parameter(torch.empty(len(views), hidden_size))
+        self.router = nn.Linear(hidden_size * 2, num_experts)
+        self.experts = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(hidden_size, expert_hidden_size),
+                    nn.GELU(),
+                    nn.Linear(expert_hidden_size, hidden_size),
+                )
+                for _ in range(num_experts)
+            ]
+        )
+        self.residual_scales = nn.ParameterDict(
+            {
+                view: nn.Parameter(torch.tensor(residual_scale_init))
+                for view in views
+            }
+        )
+        nn.init.normal_(self.view_embeddings, mean=0.0, std=0.02)
+
+    def reset_output_layers(self) -> None:
+        """Start from the existing projected graph path before learning deltas."""
+
+        for expert in self.experts:
+            nn.init.zeros_(expert[-1].weight)
+            nn.init.zeros_(expert[-1].bias)
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        view: str,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if features.ndim != 2:
+            raise ValueError("Graph-token MoE expects a [tokens, hidden] tensor.")
+        view_index = self.view_to_index[view]
+        view_embedding = self.view_embeddings[view_index].expand(features.size(0), -1)
+        router_input = torch.cat((features, view_embedding.to(features.dtype)), dim=-1)
+        router_logits = self.router(router_input.float())
+        weights = F.softmax(router_logits / self.router_temperature, dim=-1)
+        expert_outputs = torch.stack([expert(features) for expert in self.experts], dim=1)
+        delta = (weights.to(expert_outputs.dtype).unsqueeze(-1) * expert_outputs).sum(dim=1)
+        output = features + self.residual_scales[view].to(features.dtype) * delta
+        return output, weights, delta
+
+
 class HoCRSRecommendationHead(nn.Module):
     """ Full-catalog cosine recommendation head with an independent item table. """
 
@@ -286,6 +349,18 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 for view in config.views
             }
         )
+        self.moe = (
+            GraphTokenMoE(
+                hidden_size=lm_hidden_size,
+                views=tuple(config.views),
+                num_experts=config.moe_num_experts,
+                expert_hidden_size=config.moe_hidden_dim,
+                router_temperature=config.moe_router_temperature,
+                residual_scale_init=config.moe_residual_scale_init,
+            )
+            if config.use_moe and config.views
+            else None
+        )
         # END: learnable per-view scalar gates for CRS fusion.
         self.recommendation_head = HoCRSRecommendationHead(lm_hidden_size, config)
         self.recommendation_head.item_table.weight.requires_grad_(
@@ -305,6 +380,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 [
                     *getattr(self.backbone, "_no_split_modules", []),
                     "HypergraphEncoder",
+                    "GraphTokenMoE",
                     "HoCRSRecommendationHead",
                 ]
             )
@@ -314,6 +390,11 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         if self.source_projector is not None:
             nn.init.eye_(self.source_projector.weight)
             nn.init.zeros_(self.source_projector.bias)
+        if self.moe is not None:
+            self.moe.reset_output_layers()
+        if self.config.use_moe:
+            for gate in self.view_gates.values():
+                gate.requires_grad_(False)
         self._initialize_special_token_embeddings()
         if config.freeze_backbone:
             self.backbone.requires_grad_(False)
@@ -482,6 +563,8 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             "ga_sn": [],
             "sa_sn": [],
         }
+        moe_weights: list[torch.Tensor] = []
+        moe_view_weights: list[torch.Tensor] = []
         for view in self.config.views:
             if view not in hypergraphs:
                 raise ValueError(f"Missing '{view}' hypergraph batch.")
@@ -533,13 +616,22 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 raise ValueError(f"{view} node positions do not match encoder output.")
             if hyperedge_positions.size(0) != projected.hyperedge_features.size(0):
                 raise ValueError(f"{view} hyperedge positions do not match encoder output.")
-            gate = self.view_gates[view]
-            result[node_positions[:, 0], node_positions[:, 1]] = (
-                (projected.node_features * gate).to(result.dtype)
-            )
-            result[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = (
-                (projected.hyperedge_features * gate).to(result.dtype)
-            )
+            if self.moe is not None:
+                graph_features = torch.cat(
+                    (projected.node_features, projected.hyperedge_features), dim=0
+                )
+                graph_features, weights, _ = self.moe(graph_features, view)
+                node_count = projected.node_features.size(0)
+                projected_nodes = graph_features[:node_count]
+                projected_edges = graph_features[node_count:]
+                moe_weights.append(weights)
+                moe_view_weights.append(weights.mean(dim=0))
+            else:
+                gate = self.view_gates[view]
+                projected_nodes = projected.node_features * gate
+                projected_edges = projected.hyperedge_features * gate
+            result[node_positions[:, 0], node_positions[:, 1]] = projected_nodes.to(result.dtype)
+            result[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = projected_edges.to(result.dtype)
 
         zero = result.sum() * 0.0
         grounding = {
@@ -551,7 +643,25 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 for name, values in component_losses.items()
             },
         }
-        return result, grounding
+        if moe_weights:
+            all_weights = torch.cat(moe_weights, dim=0)
+            moe_usage = all_weights.mean(dim=0)
+            moe_router_entropy = (
+                -(all_weights.clamp_min(1e-8) * all_weights.clamp_min(1e-8).log())
+                .sum(dim=-1)
+                .mean()
+            )
+            moe_view_usage = torch.stack(moe_view_weights, dim=0)
+        else:
+            moe_usage = zero
+            moe_router_entropy = zero
+            moe_view_usage = zero.new_zeros((len(self.config.views), 0))
+        return result, {
+            **grounding,
+            "moe_usage": moe_usage,
+            "moe_router_entropy": moe_router_entropy,
+            "moe_view_usage": moe_view_usage,
+        }
 
     def _grounding_loss(
         self,
@@ -627,6 +737,11 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         is_cached_step = _cache_has_content(past_key_values)
         zero = inputs_embeds.sum() * 0.0
         grounding = {name: zero for name in ("loss", "ga_sa", "ga_sn", "sa_sn")}
+        moe_diagnostics: dict[str, torch.Tensor | None] = {
+            "moe_usage": None,
+            "moe_router_entropy": None,
+            "moe_view_usage": None,
+        }
         if not is_cached_step:
             inputs_embeds = self._inject_special_embeddings(input_ids, inputs_embeds)
             if self.config.views:
@@ -635,6 +750,11 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 inputs_embeds, grounding = self._inject_hypergraphs(
                     inputs_embeds, hypergraphs
                 )
+                injected_moe_diagnostics = {
+                    name: grounding.pop(name) for name in moe_diagnostics
+                }
+                if self.moe is not None:
+                    moe_diagnostics = injected_moe_diagnostics
         # START: Thinker needs token IDs for its RoPE bookkeeping, even with injected embeddings.
         if self.config.backbone_config.model_type == "qwen2_5_omni_thinker":
             kwargs["input_ids"] = input_ids
@@ -690,6 +810,9 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             grounding_ga_sa_loss=grounding["ga_sa"],
             grounding_ga_sn_loss=grounding["ga_sn"],
             grounding_sa_sn_loss=grounding["sa_sn"],
+            moe_usage=moe_diagnostics["moe_usage"],
+            moe_router_entropy=moe_diagnostics["moe_router_entropy"],
+            moe_view_usage=moe_diagnostics["moe_view_usage"],
             past_key_values=getattr(backbone_output, "past_key_values", None),
             hidden_states=backbone_output.hidden_states,
             attentions=getattr(backbone_output, "attentions", None),
@@ -702,5 +825,6 @@ __all__ = [
     "HypergraphEncoder",
     "HypergraphEncoderOutput",
     "HypergraphProjector",
+    "GraphTokenMoE",
     "hypergraph_propagate",
 ]
