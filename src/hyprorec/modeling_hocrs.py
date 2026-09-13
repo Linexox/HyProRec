@@ -287,6 +287,27 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             }
         )
         # END: learnable per-view scalar gates for CRS fusion.
+        self.sample_gate_networks = nn.ModuleDict()
+        if config.use_sample_conditional_gate:
+            self.sample_gate_networks.update(
+                {
+                    view: nn.Sequential(
+                        nn.Linear(2 * lm_hidden_size, config.gate_hidden_dim),
+                        nn.GELU(),
+                        nn.Linear(config.gate_hidden_dim, 1),
+                    )
+                    for view in config.views
+                }
+            )
+        self.residual_scales = nn.ParameterDict()
+        if config.use_residual_injection:
+            self.residual_scales.update(
+                {
+                    view: nn.Parameter(torch.tensor(config.residual_scale_init))
+                    for view in config.views
+                }
+            )
+
         self.recommendation_head = HoCRSRecommendationHead(lm_hidden_size, config)
         self.recommendation_head.item_table.weight.requires_grad_(
             config.train_item_table
@@ -314,6 +335,10 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         if self.source_projector is not None:
             nn.init.eye_(self.source_projector.weight)
             nn.init.zeros_(self.source_projector.bias)
+        if self.sample_gate_networks:
+            for network in self.sample_gate_networks.values():
+                nn.init.zeros_(network[-1].weight)
+                nn.init.zeros_(network[-1].bias)
         self._initialize_special_token_embeddings()
         if config.freeze_backbone:
             self.backbone.requires_grad_(False)
@@ -474,8 +499,18 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         self,
         inputs_embeds: torch.Tensor,
         hypergraphs: Mapping[str, Mapping[str, torch.Tensor]],
+        attention_mask: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         result = inputs_embeds.clone()
+        context_summary = None
+        if self.config.use_sample_conditional_gate:
+            context_summary = self._pool_gate_context(
+                inputs_embeds,
+                hypergraphs,
+                attention_mask,
+                labels,
+            )
         grounding_losses = []
         component_losses: dict[str, list[torch.Tensor]] = {
             "ga_sa": [],
@@ -533,13 +568,48 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 raise ValueError(f"{view} node positions do not match encoder output.")
             if hyperedge_positions.size(0) != projected.hyperedge_features.size(0):
                 raise ValueError(f"{view} hyperedge positions do not match encoder output.")
-            gate = self.view_gates[view]
-            result[node_positions[:, 0], node_positions[:, 1]] = (
-                (projected.node_features * gate).to(result.dtype)
+            graph_summary = self._pool_graph_summary(
+                projected.node_features,
+                projected.hyperedge_features,
+                node_positions,
+                hyperedge_positions,
+                inputs_embeds.size(0),
             )
-            result[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = (
-                (projected.hyperedge_features * gate).to(result.dtype)
-            )
+            if context_summary is not None:
+                gate = self._compute_sample_gate(context_summary, graph_summary, view)
+            else:
+                gate = self.view_gates[view].expand(inputs_embeds.size(0), 1)
+
+            node_gate = gate.index_select(0, node_positions[:, 0])
+            edge_gate = gate.index_select(0, hyperedge_positions[:, 0])
+            if self.config.use_residual_injection:
+                scale = self.residual_scales[view].to(projected.node_features.dtype)
+                result[node_positions[:, 0], node_positions[:, 1]] = (
+                    result[node_positions[:, 0], node_positions[:, 1]]
+                    + scale
+                    * node_gate.to(projected.node_features.dtype)
+                    * projected.node_features
+                ).to(result.dtype)
+                scale = self.residual_scales[view].to(projected.hyperedge_features.dtype)
+                result[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = (
+                    result[hyperedge_positions[:, 0], hyperedge_positions[:, 1]]
+                    + scale
+                    * edge_gate.to(projected.hyperedge_features.dtype)
+                    * projected.hyperedge_features
+                ).to(result.dtype)
+            else:
+                result[node_positions[:, 0], node_positions[:, 1]] = (
+                    (
+                        projected.node_features
+                        * node_gate.to(projected.node_features.dtype)
+                    ).to(result.dtype)
+                )
+                result[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = (
+                    (
+                        projected.hyperedge_features
+                        * edge_gate.to(projected.hyperedge_features.dtype)
+                    ).to(result.dtype)
+                )
 
         zero = result.sum() * 0.0
         grounding = {
@@ -552,6 +622,80 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             },
         }
         return result, grounding
+
+    def _compute_sample_gate(
+        self,
+        context_summary: torch.Tensor,
+        graph_summary: torch.Tensor,
+        view: str,
+    ) -> torch.Tensor:
+        network = self.sample_gate_networks[view]
+        gate_input = torch.cat((context_summary, graph_summary), dim=-1)
+        return 2.0 * torch.sigmoid(
+            network(gate_input.to(next(network.parameters()).dtype))
+        )
+
+    def _pool_gate_context(
+        self,
+        inputs_embeds: torch.Tensor,
+        hypergraphs: Mapping[str, Mapping[str, torch.Tensor]],
+        attention_mask: torch.Tensor | None,
+        labels: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Pool non-graph prompt embeddings without exposing response tokens during training."""
+
+        batch_size, sequence_length = inputs_embeds.shape[:2]
+        if attention_mask is None:
+            valid = torch.ones(
+                (batch_size, sequence_length), dtype=torch.bool, device=inputs_embeds.device
+            )
+        else:
+            valid = attention_mask.to(device=inputs_embeds.device, dtype=torch.bool).clone()
+        if labels is not None:
+            valid &= labels.to(device=inputs_embeds.device).eq(-100)
+        for graph in hypergraphs.values():
+            for position_key in ("node_positions", "hyperedge_positions"):
+                positions = graph.get(position_key)
+                if positions is not None and positions.numel():
+                    positions = positions.to(device=inputs_embeds.device)
+                    valid[positions[:, 0], positions[:, 1]] = False
+        counts = valid.sum(dim=1)
+        if torch.any(counts == 0):
+            raise ValueError("Sample gate context contains no valid non-graph prompt tokens.")
+        weights = valid.to(dtype=inputs_embeds.dtype)
+        return (inputs_embeds * weights.unsqueeze(-1)).sum(dim=1) / counts.to(
+            inputs_embeds.dtype
+        ).unsqueeze(-1)
+
+    @staticmethod
+    def _pool_graph_summary(
+        node_features: torch.Tensor,
+        hyperedge_features: torch.Tensor,
+        node_positions: torch.Tensor,
+        hyperedge_positions: torch.Tensor,
+        batch_size: int,
+    ) -> torch.Tensor:
+        """Mean-pool projected nodes and hyperedges independently for each sample."""
+
+        summary = node_features.new_zeros((batch_size, node_features.size(-1)))
+        counts = node_features.new_zeros((batch_size, 1))
+        if node_features.numel():
+            node_batch = node_positions[:, 0].to(device=node_features.device)
+            summary.index_add_(0, node_batch, node_features)
+            counts.index_add_(
+                0,
+                node_batch,
+                node_features.new_ones((node_features.size(0), 1)),
+            )
+        if hyperedge_features.numel():
+            edge_batch = hyperedge_positions[:, 0].to(device=hyperedge_features.device)
+            summary.index_add_(0, edge_batch, hyperedge_features)
+            counts.index_add_(
+                0,
+                edge_batch,
+                hyperedge_features.new_ones((hyperedge_features.size(0), 1)),
+            )
+        return summary / counts.clamp_min(1.0)
 
     def _grounding_loss(
         self,
@@ -633,7 +777,10 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 if hypergraphs is None:
                     raise ValueError("Active graph views require hypergraph inputs.")
                 inputs_embeds, grounding = self._inject_hypergraphs(
-                    inputs_embeds, hypergraphs
+                    inputs_embeds,
+                    hypergraphs,
+                    attention_mask=attention_mask,
+                    labels=labels,
                 )
         # START: Thinker needs token IDs for its RoPE bookkeeping, even with injected embeddings.
         if self.config.backbone_config.model_type == "qwen2_5_omni_thinker":

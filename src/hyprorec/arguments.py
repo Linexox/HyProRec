@@ -17,6 +17,10 @@ class ModelArguments:
     beta: float = 0.75
     num_soft_prompt_tokens: int = 10
     train_special_tokens: bool = False
+    use_sample_conditional_gate: bool = False
+    use_residual_injection: bool = False
+    gate_hidden_dim: int = 128
+    residual_scale_init: float = 0.1
     hypergraph_hidden_dim: int = 1024
     hypergraph_output_dim: int = 256
     hypergraph_num_layers: int = 3
@@ -37,6 +41,10 @@ class ModelArguments:
     recommendation_temperature: float = 0.07
 
     def __post_init__(self) -> None:
+        if self.gate_hidden_dim <= 0:
+            raise ValueError("gate_hidden_dim must be positive.")
+        if self.residual_scale_init < 0:
+            raise ValueError("residual_scale_init must be non-negative.")
         if self.item_table_init not in {"aligned_content", "random"}:
             raise ValueError("item_table_init must be 'aligned_content' or 'random'.")
         if self.grounding_weight < 0 or any(

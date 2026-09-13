@@ -16,7 +16,7 @@ from transformers import (
 from hyprorec.configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
 from hyprorec.data.hypergraph import HypergraphData
 from hyprorec.data.redial import HoCRSDataCollator
-from hyprorec.modeling_hocrs import HoCRSModel
+from hyprorec.modeling_hocrs import HoCRSModel, HypergraphEncoderOutput
 from hyprorec.processing_hocrs import HoCRSProcessor
 
 
@@ -79,6 +79,134 @@ def build_model(processor: HoCRSProcessor) -> HoCRSModel:
 
 
 class HoCRSModelTest(unittest.TestCase):
+    def build_gate_model(
+        self,
+        processor: HoCRSProcessor,
+        *,
+        use_sample_conditional_gate: bool = True,
+        use_residual_injection: bool = False,
+    ) -> HoCRSModel:
+        backbone_config = GPT2Config(
+            vocab_size=len(processor.tokenizer),
+            n_embd=16,
+            n_layer=1,
+            n_head=2,
+            n_positions=128,
+            eos_token_id=1,
+            pad_token_id=1,
+        )
+        graph_config = HoCRSHypergraphConfig(
+            input_dim=8, hidden_dim=8, output_dim=8, num_layers=1
+        )
+        config = HoCRSConfig(
+            backbone_config=backbone_config,
+            views=["txt", "img"],
+            txt_hypergraph_config=graph_config,
+            img_hypergraph_config=graph_config,
+            num_items=3,
+            item_dim=8,
+            use_hypergraph_encoder=False,
+            use_sample_conditional_gate=use_sample_conditional_gate,
+            use_residual_injection=use_residual_injection,
+            recommendation_hidden_dim=8,
+            num_soft_prompt_tokens=2,
+            freeze_backbone=True,
+            train_special_tokens=True,
+            **processor.get_token_id_map(),
+        )
+        model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
+        model.initialize_feature_tables(
+            {"txt": torch.randn(3, 8), "img": torch.randn(3, 8)},
+            item_table_init=torch.randn(3, 8),
+        )
+        return model
+
+    def test_sample_gate_is_per_sample_and_per_view_and_starts_at_one(self) -> None:
+        processor = build_processor()
+        model = self.build_gate_model(processor)
+        self.assertEqual(set(model.sample_gate_networks), {"txt", "img"})
+        self.assertEqual(model._compute_sample_gate(
+            torch.randn(2, 16), torch.randn(2, 16), "txt"
+        ).shape, (2, 1))
+        self.assertTrue(torch.equal(
+            model._compute_sample_gate(
+                torch.randn(2, 16), torch.randn(2, 16), "txt"
+            ),
+            torch.ones(2, 1),
+        ))
+        with torch.no_grad():
+            model.sample_gate_networks["txt"][-1].weight.fill_(0.25)
+            model.sample_gate_networks["txt"][-1].bias.zero_()
+            model.sample_gate_networks["img"][-1].weight.fill_(-0.25)
+            model.sample_gate_networks["img"][-1].bias.zero_()
+        context = torch.ones(2, 16)
+        graph = torch.stack((torch.ones(16), torch.full((16,), 2.0)))
+        txt = model._compute_sample_gate(context, graph, "txt")
+        img = model._compute_sample_gate(context, graph, "img")
+        self.assertFalse(torch.allclose(txt, img))
+        self.assertFalse(torch.allclose(txt[0], txt[1]))
+
+    def test_gate_context_excludes_response_and_graph_positions(self) -> None:
+        processor = build_processor()
+        model = self.build_gate_model(processor)
+        embeddings = torch.arange(1, 1 + 5 * 2, dtype=torch.float32).view(1, 5, 2)
+        graph = {
+            "node_positions": torch.tensor([[0, 1]]),
+            "hyperedge_positions": torch.tensor([[0, 3]]),
+        }
+        labels = torch.tensor([[-100, -100, -100, 7, 8]])
+        summary = model._pool_gate_context(
+            embeddings, {"txt": graph}, torch.ones(1, 5), labels
+        )
+        expected = embeddings[:, [0, 2], :].mean(dim=1)
+        self.assertTrue(torch.equal(summary, expected))
+
+    def test_residual_injection_preserves_placeholder_embedding(self) -> None:
+        processor = build_processor()
+        model = self.build_gate_model(
+            processor,
+            use_sample_conditional_gate=False,
+            use_residual_injection=True,
+        )
+        batch = HoCRSDataCollator(processor)(
+            [{
+                "context": "hello",
+                "target_item_id": 1,
+                "response": "reply",
+                "hypergraphs": {
+                    "txt": HypergraphData.from_hyperedges("txt", [(0, [1])]),
+                    "img": HypergraphData.from_hyperedges("img", [(0, [1])]),
+                },
+            }]
+        )
+        base = torch.zeros(1, batch["input_ids"].size(1), 16)
+        projected = HypergraphEncoderOutput(
+            torch.ones(2, 16), torch.full((1, 16), 2.0)
+        )
+        with mock.patch.object(
+            model.hypergraph_projectors["txt"], "forward", return_value=projected
+        ), mock.patch.object(
+            model.hypergraph_projectors["img"], "forward", return_value=projected
+        ):
+            injected, _ = model._inject_hypergraphs(
+                base, batch["hypergraphs"], batch["attention_mask"], batch["labels"]
+            )
+        txt_node = batch["hypergraphs"]["txt"]["node_positions"][0]
+        txt_edge = batch["hypergraphs"]["txt"]["hyperedge_positions"][0]
+        self.assertTrue(torch.allclose(injected[tuple(txt_node)], torch.full((16,), 0.1)))
+        self.assertTrue(torch.allclose(injected[tuple(txt_edge)], torch.full((16,), 0.2)))
+
+    def test_new_configuration_fields_round_trip(self) -> None:
+        processor = build_processor()
+        model = self.build_gate_model(processor, use_residual_injection=True)
+        with tempfile.TemporaryDirectory() as directory:
+            model.save_pretrained(directory)
+            reloaded = HoCRSModel.from_pretrained(directory)
+        self.assertTrue(reloaded.config.use_sample_conditional_gate)
+        self.assertTrue(reloaded.config.use_residual_injection)
+        self.assertEqual(reloaded.config.gate_hidden_dim, 128)
+        self.assertEqual(reloaded.config.residual_scale_init, 0.1)
+
     # START: Verify shared content initialization does not tie trainable tables.
     def test_co_and_item_tables_copy_the_same_content_independently(self) -> None:
         processor = build_processor()

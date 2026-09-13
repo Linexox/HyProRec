@@ -96,6 +96,10 @@ class HoCRSConfig(PretrainedConfig):
         num_soft_prompt_tokens: int = 10,
         freeze_backbone: bool = True,
         train_special_tokens: bool = False,
+        use_sample_conditional_gate: bool = False,
+        use_residual_injection: bool = False,
+        gate_hidden_dim: int = 128,
+        residual_scale_init: float = 0.1,
         node_token_id: int | None = None,
         hyperedge_token_id: int | None = None,
         rec_token_id: int | None = None,
@@ -139,6 +143,10 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("Joint Grounding requires use_hypergraph_encoder=true.")
         if grounding_sa_sn_weight > 0 and not use_source_projector:
             raise ValueError("grounding_sa_sn_weight has no trainable effect without a source projector.")
+        if gate_hidden_dim <= 0:
+            raise ValueError("gate_hidden_dim must be positive.")
+        if residual_scale_init < 0:
+            raise ValueError("residual_scale_init must be non-negative.")
 
         self.views = views
         self.co_hypergraph_config = _hypergraph_config(co_hypergraph_config)
@@ -165,6 +173,10 @@ class HoCRSConfig(PretrainedConfig):
         self.num_soft_prompt_tokens = num_soft_prompt_tokens
         self.freeze_backbone = freeze_backbone
         self.train_special_tokens = train_special_tokens
+        self.use_sample_conditional_gate = use_sample_conditional_gate
+        self.use_residual_injection = use_residual_injection
+        self.gate_hidden_dim = gate_hidden_dim
+        self.residual_scale_init = residual_scale_init
         self.node_token_id = node_token_id
         self.hyperedge_token_id = hyperedge_token_id
         self.rec_token_id = rec_token_id
