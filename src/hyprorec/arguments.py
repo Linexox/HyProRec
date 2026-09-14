@@ -22,9 +22,28 @@ class ModelArguments:
     hypergraph_num_layers: int = 3
     hypergraph_dropout: float = 0.0
     use_hypergraph_encoder: bool = True
-    recommendation_hidden_dim: int = 768
+    grounding_checkpoint_path: str | None = None
+    grounding_ga_sa_weight: float = 1.0
+    grounding_ga_sn_weight: float = 3.0
+    grounding_sa_sn_weight: float = 3.0
+    grounding_temperature: float = 0.07
+    item_table_init: str = "random"
+    train_item_table: bool = True
+    recommendation_hidden_dim: int = 2048  # Modified: match HoCRS2 recommendation space.
+    grounding_tokenizer_name_or_path: str = "sentence-transformers/all-mpnet-base-v2"  # Modified: raw-text Grounding tokenizer.
     recommendation_dropout: float = 0.0
     recommendation_temperature: float = 0.07
+    use_moe: bool = False
+    moe_num_experts: int = 4
+    moe_hidden_dim: int = 512
+    moe_router_temperature: float = 1.0
+    moe_residual_scale_init: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.item_table_init not in {"aligned_content", "random"}:
+            raise ValueError("item_table_init must be 'aligned_content' or 'random'.")
+        if self.grounding_temperature <= 0:
+            raise ValueError("grounding_temperature must be positive.")
 
 
 @dataclass
@@ -32,13 +51,13 @@ class DataArguments:
     dataset_path: str = "data/lhf-redial"
     hyperedge_table_path: str | None = None
     embeddings_dir_name: str = "embeddings"
-    # START: Load the offline content initialization instead of fusing at train time.
     content_table_path: str = "data/lhf-redial/embeddings/content_full.pt"
-    # END: Load the offline content initialization instead of fusing at train time.
     views: list[str] = field(default_factory=lambda: list(GRAPH_VIEWS))
     topk: int = 3
     khop: int = 2
-    max_length: int | None = None
+    max_length: int = 1024
+    max_history_tokens: int = 150
+    max_response_tokens: int = 64
 
     def __post_init__(self) -> None:
         self.views = list(dict.fromkeys(self.views))
@@ -87,4 +106,8 @@ class HoCRSTrainingArguments(TrainingArguments):
         super().__post_init__()
 
 
-__all__ = ["DataArguments", "HoCRSTrainingArguments", "ModelArguments"]
+__all__ = [
+    "DataArguments",
+    "HoCRSTrainingArguments",
+    "ModelArguments",
+]

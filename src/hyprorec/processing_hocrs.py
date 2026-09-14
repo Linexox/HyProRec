@@ -30,6 +30,11 @@ def graph_end_token(view: str) -> str:
 class HoCRSProcessor(ProcessorMixin):
     """A tokenizer-only processor that serializes variable-size graph blocks."""
 
+    # START: Declare the single processor component required by Transformers.
+    attributes = ["tokenizer"]
+    tokenizer_class = ("PreTrainedTokenizerBase", "PreTrainedTokenizerFast")
+    # END: Declare the single processor component required by Transformers.
+
     def __init__(
         self,
         tokenizer,
@@ -83,10 +88,12 @@ class HoCRSProcessor(ProcessorMixin):
             "rec_token_id": convert(REC_TOKEN),
             "soft_prompt_token_id": convert(SOFT_PROMPT_TOKEN),
             "graph_start_token_ids": {
-                view: convert(graph_start_token(view)) for view in GRAPH_VIEWS
+                view: convert(graph_start_token(view))
+                for view in GRAPH_VIEWS
             },
             "graph_end_token_ids": {
-                view: convert(graph_end_token(view)) for view in GRAPH_VIEWS
+                view: convert(graph_end_token(view))
+                for view in GRAPH_VIEWS
             },
             "trainable_special_token_ids": [
                 convert(token) for token in boundary_tokens

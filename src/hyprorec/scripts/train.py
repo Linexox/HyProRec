@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, Trainer  # Modified: backbone selection lives in the model module.
+from transformers import AutoTokenizer, Trainer, set_seed  # Modified: seed before constructing modules.
 from transformers.trainer_utils import get_last_checkpoint
 
 from ..arguments import DataArguments, ModelArguments
@@ -23,7 +23,6 @@ from ..processing_hocrs import HoCRSProcessor
 
 
 def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
-    # START: Load only enabled semantic views and retain their native widths.
     dataset_path = Path(data_args.dataset_path)
     embedding_path = dataset_path / data_args.embeddings_dir_name
     tables = {
@@ -37,12 +36,10 @@ def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
     }
     if any(table.ndim != 2 for table in tables.values()):
         raise ValueError("Every modality embedding table must be two-dimensional.")
-    # END: Load only enabled semantic views and retain their native widths.
     return tables
 
 
 def _load_content_table(data_args: DataArguments) -> torch.Tensor:
-    # START: Keep multimodal fusion entirely in the offline preparation stage.
     table = torch.load(
         data_args.content_table_path,
         map_location="cpu",
@@ -50,7 +47,6 @@ def _load_content_table(data_args: DataArguments) -> torch.Tensor:
     ).float()
     if table.ndim != 2:
         raise ValueError("The content initialization table must be two-dimensional.")
-    # END: Keep multimodal fusion entirely in the offline preparation stage.
     return table
 
 
@@ -65,7 +61,6 @@ def _build_model(
     backbone.resize_token_embeddings(len(processor.tokenizer))
 
     token_ids = processor.get_token_id_map()
-    # START: Infer each view width from its prepared table.
     num_items, item_dim = content_table.shape
     if any(table.size(0) != num_items for table in modality_tables.values()):
         raise ValueError("Content and modality tables contain different item counts.")
@@ -83,16 +78,27 @@ def _build_model(
         )
         for view in data_args.views
     }
-    # END: Infer each view width from its prepared table.
     config = HoCRSConfig(
         backbone_config=backbone.config,
         views=data_args.views,
         num_items=num_items,
-        item_dim=item_dim,
+        item_dim=(                                                          # ***** FIXME *****
+            model_args.recommendation_hidden_dim
+            if model_args.item_table_init == "random"
+            else item_dim
+        ),
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
+        grounding_checkpoint_path=model_args.grounding_checkpoint_path,
+        item_table_init=model_args.item_table_init,
+        train_item_table=model_args.train_item_table,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_dropout=model_args.recommendation_dropout,
         recommendation_temperature=model_args.recommendation_temperature,
+        use_moe=model_args.use_moe,
+        moe_num_experts=model_args.moe_num_experts,
+        moe_hidden_dim=model_args.moe_hidden_dim,
+        moe_router_temperature=model_args.moe_router_temperature,
+        moe_residual_scale_init=model_args.moe_residual_scale_init,
         beta=model_args.beta,
         num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
         freeze_backbone=model_args.freeze_backbone,
@@ -105,15 +111,17 @@ def _build_model(
         **token_ids,
     )
     model = HoCRSModel(config, backbone=backbone)
-    # START: Initialize co nodes and items from independent copies of one content base.
+    if model_args.grounding_checkpoint_path:
+        model.load_grounding_checkpoint(model_args.grounding_checkpoint_path)
     feature_tables = dict(modality_tables)
     if "co" in data_args.views:
         feature_tables["co"] = content_table
     model.initialize_feature_tables(
         feature_tables,
-        item_table_init=content_table,
+        item_table_init=(
+            content_table if model_args.item_table_init == "aligned_content" else None
+        ),
     )
-    # END: Initialize co nodes and items from independent copies of one content base.
     return model
 
 
@@ -154,6 +162,7 @@ def _save_experiment_provenance(
 def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
+    set_seed(training_args.seed)  # Modified: cover all newly initialized parameters.
 
     tokenizer = AutoTokenizer.from_pretrained(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(
@@ -191,25 +200,19 @@ def main() -> None:
                 f"{hypergraph_table.num_items} and {model.config.num_items}."
             )
 
-    train_dataset = (
-        HoCRSDataset(dataset_config, "train", hypergraph_table)
-        if training_args.do_train
-        else None
-    )
-    eval_dataset = (
-        HoCRSDataset(dataset_config, "validation", hypergraph_table)
-        if training_args.do_eval
-        else None
-    )
-    test_dataset = (
-        HoCRSDataset(dataset_config, "test", hypergraph_table)
-        if training_args.do_predict
-        else None
-    )
+    train_dataset = HoCRSDataset(dataset_config, "train", hypergraph_table) if training_args.do_train else None
+    eval_dataset = HoCRSDataset(dataset_config, "validation", hypergraph_table) if training_args.do_eval else None
+    test_dataset = HoCRSDataset(dataset_config, "test", hypergraph_table) if training_args.do_predict else None
+
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=HoCRSDataCollator(processor, max_length=data_args.max_length),
+        data_collator=HoCRSDataCollator(
+            processor,
+            max_length=data_args.max_length,
+            max_history_tokens=data_args.max_history_tokens,
+            max_response_tokens=data_args.max_response_tokens,
+        ),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=processor,
@@ -228,9 +231,7 @@ def main() -> None:
         )
 
     if training_args.do_train:
-        train_result = trainer.train(
-            resume_from_checkpoint=_resolve_resume_checkpoint(training_args)
-        )
+        train_result = trainer.train(resume_from_checkpoint=_resolve_resume_checkpoint(training_args))
         trainer.save_model()
         trainer.save_state()
         trainer.log_metrics("train", train_result.metrics)

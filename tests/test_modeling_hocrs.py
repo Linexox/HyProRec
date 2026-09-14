@@ -95,6 +95,7 @@ class HoCRSModelTest(unittest.TestCase):
             model.co_feature_table.data_ptr(),
             model.recommendation_head.item_table.weight.data_ptr(),
         )
+
     # END: Verify shared content initialization does not tie trainable tables.
 
     def test_soft_prompt_injection_supports_batches(self) -> None:

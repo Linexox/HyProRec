@@ -113,10 +113,18 @@ class HoCRSDataCollator:
     """Tokenize conversations and pack every graph view into tensor mappings."""
 
     def __init__(
-        self, processor: HoCRSProcessor, max_length: int | None = None
+        self,
+        processor: HoCRSProcessor,
+        max_length: int | None = 1024,
+        max_history_tokens: int = 150,
+        max_response_tokens: int = 64,
     ) -> None:
         self.processor = processor
         self.max_length = max_length
+        # START: Reserve explicit budgets for history and response supervision.
+        self.max_history_tokens = max_history_tokens
+        self.max_response_tokens = max_response_tokens
+        # END: Reserve explicit budgets for history and response supervision.
 
     @staticmethod
     def _positions(
@@ -157,6 +165,11 @@ class HoCRSDataCollator:
     ) -> tuple[list[int], int]:
         """Keep graph prompts intact while trimming context, then response."""
 
+        response = input_ids[prompt_length:]
+        # START: Apply the response token budget before the total sequence budget.
+        response = response[: self.max_response_tokens]
+        input_ids = input_ids[:prompt_length] + response
+        # END: Apply the response token budget before the total sequence budget.
         if self.max_length is None or len(input_ids) <= self.max_length:
             return input_ids, prompt_length
 
@@ -185,6 +198,40 @@ class HoCRSDataCollator:
             retained_prompt_length,
         )
 
+    # START: Fit graph prompts by removing only complete BFS-tail hyperedges.
+    def _fit_graphs(
+        self,
+        context: str,
+        graphs: dict[str, HypergraphData],
+    ) -> tuple[dict[str, HypergraphData], str]:
+        while True:
+            sizes = {
+                view: (graph.num_nodes, graph.num_hyperedges)
+                for view, graph in graphs.items()
+            }
+            prompt = self.processor.build_prompt(context, sizes)
+            graph_prompt_length = len(
+                self.processor.tokenizer(
+                    f"{self.processor.build_prompt('', sizes)}\n",
+                    add_special_tokens=False,
+                )["input_ids"]
+            )
+            if self.max_length is None or graph_prompt_length <= self.max_length:
+                return graphs, prompt
+
+            candidates = [
+                view for view, graph in graphs.items() if graph.num_hyperedges > 1
+            ]
+            if not candidates:
+                return graphs, prompt
+            view = max(
+                candidates,
+                key=lambda name: graphs[name].num_nodes + graphs[name].num_hyperedges,
+            )
+            graph = graphs[view]
+            graphs[view] = graph.truncate_hyperedges(graph.num_hyperedges - 1)
+    # END: Fit graph prompts by removing only complete BFS-tail hyperedges.
+
     def __call__(self, features: Sequence[dict[str, Any]]) -> BatchData:
         if not features:
             raise ValueError("Cannot collate an empty batch.")
@@ -193,21 +240,26 @@ class HoCRSDataCollator:
             raise ValueError("All samples in a batch must enable the same graph views.")
 
         hypergraphs: dict[str, HypergraphBatch] = {}
-        graph_sizes: list[dict[str, tuple[int, int]]] = []
+        # START: Bound recent history and fit graph blocks before tokenization.
+        fitted_graphs: list[dict[str, HypergraphData]] = []
+        prompts: list[str] = []
         for feature in features:
-            graph_sizes.append(
-                {
-                    view: (
-                        feature["hypergraphs"][view].num_nodes,
-                        feature["hypergraphs"][view].num_hyperedges,
-                    )
-                    for view in views
-                }
+            history_ids = self.processor.tokenizer(
+                feature["context"],
+                add_special_tokens=False,
+            )["input_ids"]
+            history_ids = history_ids[-self.max_history_tokens :]
+            context = self.processor.tokenizer.decode(
+                history_ids,
+                skip_special_tokens=False,
             )
-        prompts = [
-            self.processor.build_prompt(feature["context"], sizes)
-            for feature, sizes in zip(features, graph_sizes)
-        ]
+            graphs, prompt = self._fit_graphs(
+                context,
+                dict(feature["hypergraphs"]),
+            )
+            fitted_graphs.append(graphs)
+            prompts.append(prompt)
+        # END: Bound recent history and fit graph blocks before tokenization.
         eos_token = self.processor.tokenizer.eos_token or ""
         texts = [
             f"{prompt}\n{feature['response']}{eos_token}"
@@ -250,7 +302,7 @@ class HoCRSDataCollator:
 
         for view in views:
             graphs: list[HypergraphData] = [
-                feature["hypergraphs"][view] for feature in features
+                graph_set[view] for graph_set in fitted_graphs
             ]
             graph_batch = batch_hypergraphs(graphs)
             graph_batch["node_positions"] = self._positions(

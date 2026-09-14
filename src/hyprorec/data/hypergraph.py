@@ -19,6 +19,9 @@ class HypergraphData:
     view: str
     node_ids: torch.Tensor
     hyperedge_index: torch.Tensor
+    # START: Preserve each hyperedge anchor for the v3 Grounding objective.
+    hyperedge_anchor_index: torch.Tensor
+    # END: Preserve each hyperedge anchor for the v3 Grounding objective.
 
     @classmethod
     def from_hyperedges(
@@ -30,6 +33,7 @@ class HypergraphData:
         node_to_local: dict[int, int] = {}
         incidence_nodes: list[int] = []
         incidence_edges: list[int] = []
+        anchor_indices: list[int] = []
 
         def local_index(node_id: int) -> int:
             if node_id not in node_to_local:
@@ -39,6 +43,7 @@ class HypergraphData:
 
         for edge_id, (anchor_id, neighbor_ids) in enumerate(hyperedges):
             members = list(dict.fromkeys((anchor_id, *neighbor_ids)))
+            anchor_indices.append(local_index(anchor_id))
             for node_id in members:
                 incidence_nodes.append(local_index(node_id))
                 incidence_edges.append(edge_id)
@@ -52,6 +57,7 @@ class HypergraphData:
                 [incidence_nodes, incidence_edges],
                 dtype=torch.long,
             ),
+            hyperedge_anchor_index=torch.tensor(anchor_indices, dtype=torch.long),
         )
 
     @property
@@ -61,6 +67,21 @@ class HypergraphData:
     @property
     def num_hyperedges(self) -> int:
         return int(self.hyperedge_index[1].max().item()) + 1
+
+    # START: Support whole-hyperedge removal during final prompt fitting.
+    def truncate_hyperedges(self, count: int) -> HypergraphData:
+        if not 1 <= count <= self.num_hyperedges:
+            raise ValueError("count must retain at least one hyperedge.")
+        if count == self.num_hyperedges:
+            return self
+        node_index, edge_index = self.hyperedge_index
+        hyperedges = []
+        for edge_id in range(count):
+            members = self.node_ids[node_index[edge_index == edge_id]].tolist()
+            anchor_id = int(self.node_ids[self.hyperedge_anchor_index[edge_id]])
+            hyperedges.append((anchor_id, [item for item in members if item != anchor_id]))
+        return HypergraphData.from_hyperedges(self.view, hyperedges)
+    # END: Support whole-hyperedge removal during final prompt fitting.
 
 
 class HypergraphTable:
@@ -110,35 +131,31 @@ class HypergraphTable:
             raise ValueError("topk must be non-negative and khop must be positive.")
 
         anchors = [anchor_ids] if isinstance(anchor_ids, int) else list(anchor_ids)
-        if not anchors:
-            raise ValueError("At least one context item is required.")
-        frontier = list(dict.fromkeys(anchors))
+        assert anchors, "At least one anchor id is required."
+        # Modified: let the 120-node graph budget, rather than a small anchor cap, bound retrieval.
+        frontier = list(dict.fromkeys(reversed(anchors)))[:256]
         visited: set[int] = set()
         hyperedges: list[tuple[int, list[int]]] = []
         selected_nodes: set[int] = set()
-        max_nodes = 125
+        max_nodes = 120                                                                       # ***** FIXME *****
 
         for _ in range(khop):
             next_frontier: list[int] = []
             for anchor_id in frontier:
-                if anchor_id in visited:
-                    continue
+                if anchor_id in visited: continue
                 row = self.tables[view][anchor_id]
                 neighbors = row[1 : topk + 1]
                 candidate_nodes = {anchor_id, *neighbors}
                 if len(selected_nodes | candidate_nodes) > max_nodes:
                     if not hyperedges:
-                        raise ValueError(
-                            "The first hyperedge exceeds the 125-node limit."
-                        )
+                        raise ValueError("The first hyperedge exceeds the 120-node limit.")
                     return HypergraphData.from_hyperedges(view, hyperedges)
                 selected_nodes.update(candidate_nodes)
                 hyperedges.append((anchor_id, neighbors))
                 visited.add(anchor_id)
                 next_frontier.extend(neighbors)
             frontier = list(dict.fromkeys(next_frontier))
-            if not frontier:
-                break
+            if not frontier: break
 
         return HypergraphData.from_hyperedges(view, hyperedges)
 

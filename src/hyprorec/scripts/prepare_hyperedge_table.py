@@ -25,8 +25,11 @@ def compute_similarity_neighbors(
     batch_size: int,
     device: torch.device,
 ) -> list[list[int]]:
+    """Compute top-k nearest neighbors for each item based on cosine similarity."""
+    
     if embeddings.ndim != 2:
         raise ValueError(f"Expected a 2D embedding table, got {embeddings.shape}.")
+
     embeddings = F.normalize(embeddings.float(), dim=-1).to(device)
     num_items = embeddings.size(0)
     candidate_count = min(topk + 1, num_items)
@@ -36,9 +39,8 @@ def compute_similarity_neighbors(
         indices = similarities.topk(candidate_count, dim=-1).indices.cpu().tolist()
         for offset, candidates in enumerate(indices):
             anchor_id = start + offset
-            neighbors.append(
-                [node_id for node_id in candidates if node_id != anchor_id][:topk]
-            )
+            filtered_candidates = [node_id for node_id in candidates if node_id != anchor_id]
+            neighbors.append(filtered_candidates[:topk])
     return neighbors
 
 
@@ -55,11 +57,7 @@ def compute_cooccurrence_neighbors(
             for utterance in conversation["dialog"]
             for item_id in utterance.get("items", [])
         }
-        invalid_ids = [item_id for item_id in item_ids if not 0 <= item_id < num_items]
-        if invalid_ids:
-            raise ValueError(
-                f"train_data.json contains invalid item ids: {invalid_ids[:20]}"
-            )
+        
         for left, right in combinations(sorted(item_ids), 2):
             counts[left][right] += 1
             counts[right][left] += 1
@@ -86,7 +84,6 @@ def prepare_hyperedge_table(
     if topk < 0:
         raise ValueError("topk must be non-negative.")
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # Modified: allow a newly encoded feature directory without replacing old data.
     embedding_dir = embedding_dir or dataset_dir / "embeddings"
     embeddings = {
         modality: torch.load(
@@ -97,10 +94,6 @@ def prepare_hyperedge_table(
         for modality in MODALITIES
     }
     num_items = embeddings[MODALITIES[0]].size(0)
-    if any(
-        table.ndim != 2 or table.size(0) != num_items for table in embeddings.values()
-    ):
-        raise ValueError("All modality embedding tables must contain the same items.")
 
     cooccurrence = compute_cooccurrence_neighbors(dataset_dir, num_items)
     table: dict[str, list[list[int]]] = {
@@ -130,7 +123,6 @@ def parse_args() -> argparse.Namespace:
         description="Build separated HoCRS hypergraph neighbor tables."
     )
     parser.add_argument("--dataset-dir", type=Path, required=True)
-    # Modified: select the exact offline embedding version used for semantic edges.
     parser.add_argument("--embedding-dir", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--topk", type=int, default=50)

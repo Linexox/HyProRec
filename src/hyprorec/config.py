@@ -11,7 +11,11 @@ from typing import Any, Sequence
 import yaml
 from transformers import HfArgumentParser
 
-from .arguments import DataArguments, HoCRSTrainingArguments, ModelArguments
+from .arguments import (
+    DataArguments,
+    HoCRSTrainingArguments,
+    ModelArguments,
+)
 
 CONFIG_SECTIONS = (
     ("model", ModelArguments),
