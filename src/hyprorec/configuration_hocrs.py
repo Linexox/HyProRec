@@ -91,6 +91,11 @@ class HoCRSConfig(PretrainedConfig):
         moe_hidden_dim: int = 512,
         moe_router_temperature: float = 1.0,
         moe_residual_scale_init: float = 1.0,
+        use_user_moe: bool = False,
+        user_moe_num_experts: int = 4,
+        user_moe_hidden_dim: int = 512,
+        user_moe_router_temperature: float = 1.0,
+        user_moe_residual_scale_init: float = 1.0,
         beta: float = 0.75,
         num_soft_prompt_tokens: int = 10,
         freeze_backbone: bool = True,
@@ -127,6 +132,14 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("moe_router_temperature must be positive.")
         if moe_residual_scale_init < 0:
             raise ValueError("moe_residual_scale_init must be non-negative.")
+        if user_moe_num_experts < 2:
+            raise ValueError("user_moe_num_experts must be at least 2.")
+        if user_moe_hidden_dim < 1:
+            raise ValueError("user_moe_hidden_dim must be positive.")
+        if user_moe_router_temperature <= 0:
+            raise ValueError("user_moe_router_temperature must be positive.")
+        if user_moe_residual_scale_init < 0:
+            raise ValueError("user_moe_residual_scale_init must be non-negative.")
         if use_moe and "co" in views:
             raise ValueError("The token MoE branch only supports txt/img/ado/vdo views.")
 
@@ -150,6 +163,11 @@ class HoCRSConfig(PretrainedConfig):
         self.moe_hidden_dim = moe_hidden_dim
         self.moe_router_temperature = moe_router_temperature
         self.moe_residual_scale_init = moe_residual_scale_init
+        self.use_user_moe = use_user_moe
+        self.user_moe_num_experts = user_moe_num_experts
+        self.user_moe_hidden_dim = user_moe_hidden_dim
+        self.user_moe_router_temperature = user_moe_router_temperature
+        self.user_moe_residual_scale_init = user_moe_residual_scale_init
         self.beta = beta
         self.num_soft_prompt_tokens = num_soft_prompt_tokens
         self.freeze_backbone = freeze_backbone

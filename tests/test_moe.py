@@ -4,7 +4,7 @@ import torch
 from transformers import GPT2Config, GPT2LMHeadModel
 
 from hyprorec.configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
-from hyprorec.modeling_hocrs import GraphTokenMoE, HoCRSModel
+from hyprorec.modeling_hocrs import GraphTokenMoE, HoCRSModel, UserProjectionMoE
 
 
 class GraphTokenMoETest(unittest.TestCase):
@@ -25,6 +25,23 @@ class GraphTokenMoETest(unittest.TestCase):
         self.assertTrue(torch.allclose(delta, torch.zeros_like(delta)))
         self.assertTrue(torch.allclose(weights.sum(dim=-1), torch.ones(5)))
         self.assertFalse(torch.isnan(weights).any())
+
+    def test_user_moe_preserves_base_projection_at_initialization(self) -> None:
+        moe = UserProjectionMoE(
+            input_dim=8,
+            output_dim=4,
+            num_experts=2,
+            expert_hidden_dim=4,
+            router_temperature=1.0,
+            residual_scale_init=1.0,
+        )
+        hidden_states = torch.randn(3, 8)
+        base_users = torch.randn(3, 4)
+        output, weights, delta = moe(hidden_states, base_users)
+
+        self.assertTrue(torch.allclose(output, base_users))
+        self.assertTrue(torch.allclose(delta, torch.zeros_like(delta)))
+        self.assertTrue(torch.allclose(weights.sum(dim=-1), torch.ones(3)))
 
     def test_moe_mode_creates_router_and_experts(self) -> None:
         backbone_config = GPT2Config(

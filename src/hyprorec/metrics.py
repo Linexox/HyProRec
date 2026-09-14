@@ -95,6 +95,8 @@ def preprocess_logits_for_metrics(logits, _labels):
     moe_usage = logits[4] if len(logits) > 4 else rec_loss.new_zeros(())
     moe_router_entropy = logits[5] if len(logits) > 5 else rec_loss.new_zeros(())
     moe_view_usage = logits[6] if len(logits) > 6 else rec_loss.new_zeros((0, 0))
+    user_moe_usage = logits[7] if len(logits) > 7 else rec_loss.new_zeros((0,))
+    user_moe_router_entropy = logits[8] if len(logits) > 8 else rec_loss.new_zeros(())
     topk = rec_scores.topk(min(50, rec_scores.size(-1)), dim=-1).indices
     token_predictions = lm_logits[:, :-1].argmax(dim=-1)
     batch_size = rec_scores.size(0)
@@ -108,6 +110,11 @@ def preprocess_logits_for_metrics(logits, _labels):
         if moe_view_usage.ndim == 2
         else moe_view_usage.reshape(1).expand(batch_size)
     )
+    batch_user_moe_usage = (
+        user_moe_usage.reshape(1, -1).expand(batch_size, -1)
+        if user_moe_usage.ndim > 0
+        else user_moe_usage.reshape(1).expand(batch_size)
+    )
     return (
         topk,
         token_predictions,
@@ -116,6 +123,8 @@ def preprocess_logits_for_metrics(logits, _labels):
         batch_moe_usage,
         moe_router_entropy.reshape(1).expand(batch_size),
         batch_moe_view_usage,
+        batch_user_moe_usage,
+        user_moe_router_entropy.reshape(1).expand(batch_size),
     )
 
 
@@ -131,6 +140,8 @@ def build_compute_metrics(processor) -> callable:
             moe_usages,
             moe_router_entropies,
             moe_view_usages,
+            user_moe_usages,
+            user_moe_router_entropies,
         ) = prediction.predictions
         lm_labels, rec_labels = prediction.label_ids
         shifted_labels = lm_labels[:, 1:]
@@ -153,6 +164,12 @@ def build_compute_metrics(processor) -> callable:
                 for view_index, view_usage in enumerate(moe_view_usages.mean(axis=0)):
                     for expert_index, value in enumerate(view_usage):
                         metrics[f"moe_view_{view_index}_expert_{expert_index}_usage"] = float(value)
+        if user_moe_usages.ndim > 1 and user_moe_usages.shape[-1] > 0:
+            for index, value in enumerate(user_moe_usages.mean(axis=0)):
+                metrics[f"user_moe_expert_{index}_usage"] = float(value)
+            metrics["user_moe_router_entropy"] = float(
+                user_moe_router_entropies.mean()
+            )
         for n in range(1, 5):
             metrics[f"bleu@{n}"] = _bleu(references, hypotheses, n)
             metrics[f"dist@{n}"] = _distinct(hypotheses, n)

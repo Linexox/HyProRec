@@ -79,6 +79,8 @@ class HoCRSOutput(ModelOutput):
     moe_usage: torch.Tensor | None = None
     moe_router_entropy: torch.Tensor | None = None
     moe_view_usage: torch.Tensor | None = None
+    user_moe_usage: torch.Tensor | None = None
+    user_moe_router_entropy: torch.Tensor | None = None
     past_key_values: Any | None = None
     hidden_states: tuple[torch.Tensor, ...] | None = None
     attentions: tuple[torch.Tensor, ...] | None = None
@@ -251,6 +253,59 @@ class GraphTokenMoE(nn.Module):
         return output, weights, delta
 
 
+class UserProjectionMoE(nn.Module):
+    """Route a fused user state through residual experts in item space."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        num_experts: int,
+        expert_hidden_dim: int,
+        router_temperature: float,
+        residual_scale_init: float,
+    ) -> None:
+        super().__init__()
+        self.router_temperature = router_temperature
+        self.router = nn.Linear(input_dim, num_experts)
+        self.experts = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(input_dim, expert_hidden_dim),
+                    nn.GELU(),
+                    nn.Linear(expert_hidden_dim, output_dim),
+                )
+                for _ in range(num_experts)
+            ]
+        )
+        self.residual_scale = nn.Parameter(torch.tensor(residual_scale_init))
+        self.reset_output_layers()
+
+    def reset_output_layers(self) -> None:
+        for expert in self.experts:
+            nn.init.zeros_(expert[-1].weight)
+            nn.init.zeros_(expert[-1].bias)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        base_users: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        weights = F.softmax(
+            self.router(hidden_states.float()) / self.router_temperature,
+            dim=-1,
+        )
+        expert_outputs = torch.stack(
+            [expert(hidden_states) for expert in self.experts],
+            dim=1,
+        )
+        delta = (
+            weights.to(expert_outputs.dtype).unsqueeze(-1) * expert_outputs
+        ).sum(dim=1)
+        output = base_users + self.residual_scale.to(base_users.dtype) * delta
+        return output, weights, delta
+
+
 class HoCRSRecommendationHead(nn.Module):
     """ Full-catalog cosine recommendation head with an independent item table. """
 
@@ -262,13 +317,44 @@ class HoCRSRecommendationHead(nn.Module):
             nn.Dropout(config.recommendation_dropout),
             nn.Linear(config.recommendation_hidden_dim, config.item_dim),
         )
+        self.user_moe = (
+            UserProjectionMoE(
+                input_dim=input_dim,
+                output_dim=config.item_dim,
+                num_experts=config.user_moe_num_experts,
+                expert_hidden_dim=config.user_moe_hidden_dim,
+                router_temperature=config.user_moe_router_temperature,
+                residual_scale_init=config.user_moe_residual_scale_init,
+            )
+            if config.use_user_moe
+            else None
+        )
         self.item_table = nn.Embedding(config.num_items, config.item_dim)
         self.temperature = config.recommendation_temperature
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        users = F.normalize(self.user_projector(hidden_states), dim=-1)
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        users = self.user_projector(hidden_states)
+        zero = users.sum() * 0.0
+        if self.user_moe is not None:
+            users, user_moe_weights, _ = self.user_moe(hidden_states, users)
+            user_moe_usage = user_moe_weights.mean(dim=0)
+            user_moe_router_entropy = (
+                -(user_moe_weights.clamp_min(1e-8) * user_moe_weights.clamp_min(1e-8).log())
+                .sum(dim=-1)
+                .mean()
+            )
+        else:
+            user_moe_usage = users.new_zeros((0,))
+            user_moe_router_entropy = zero
+        users = F.normalize(users, dim=-1)
         items = F.normalize(self.item_table.weight, dim=-1)
-        return users @ items.t() / self.temperature
+        return users @ items.t() / self.temperature, {
+            "user_moe_usage": user_moe_usage,
+            "user_moe_router_entropy": user_moe_router_entropy,
+        }
 
 
 class HoCRSModel(PreTrainedModel, GenerationMixin):
@@ -633,7 +719,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         if not torch.all(rec_mask.sum(dim=1) == 1):
             raise ValueError("Every sample must contain exactly one recommendation token.")
         rec_hidden = backbone_output.hidden_states[-1][rec_mask]
-        rec_scores = self.recommendation_head(rec_hidden)
+        rec_scores, user_moe_diagnostics = self.recommendation_head(rec_hidden)
         if rec_labels is not None:
             rec_loss = F.cross_entropy(rec_scores, rec_labels)
         else:
@@ -656,6 +742,8 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             moe_usage=moe_diagnostics["moe_usage"],
             moe_router_entropy=moe_diagnostics["moe_router_entropy"],
             moe_view_usage=moe_diagnostics["moe_view_usage"],
+            user_moe_usage=user_moe_diagnostics["user_moe_usage"],
+            user_moe_router_entropy=user_moe_diagnostics["user_moe_router_entropy"],
             past_key_values=getattr(backbone_output, "past_key_values", None),
             hidden_states=backbone_output.hidden_states,
             attentions=getattr(backbone_output, "attentions", None),

@@ -38,6 +38,11 @@ class ModelArguments:
     moe_hidden_dim: int = 512
     moe_router_temperature: float = 1.0
     moe_residual_scale_init: float = 1.0
+    use_user_moe: bool = False
+    user_moe_num_experts: int = 4
+    user_moe_hidden_dim: int = 512
+    user_moe_router_temperature: float = 1.0
+    user_moe_residual_scale_init: float = 1.0
 
     def __post_init__(self) -> None:
         if self.item_table_init not in {"aligned_content", "random"}:
