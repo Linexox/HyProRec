@@ -88,10 +88,12 @@ class HoCRSProcessor(ProcessorMixin):
             "rec_token_id": convert(REC_TOKEN),
             "soft_prompt_token_id": convert(SOFT_PROMPT_TOKEN),
             "graph_start_token_ids": {
-                view: convert(graph_start_token(view)) for view in GRAPH_VIEWS
+                view: convert(graph_start_token(view))
+                for view in GRAPH_VIEWS
             },
             "graph_end_token_ids": {
-                view: convert(graph_end_token(view)) for view in GRAPH_VIEWS
+                view: convert(graph_end_token(view))
+                for view in GRAPH_VIEWS
             },
             "trainable_special_token_ids": [
                 convert(token) for token in boundary_tokens

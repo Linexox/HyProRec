@@ -13,11 +13,11 @@ from torch.utils.data import Dataset
 
 from .batch import BatchData, HypergraphBatch, batch_hypergraphs
 from .hypergraph import HypergraphTable
-from .alignment import HoCRSAlignmentDataset
+from .source_catalogue import GroundingCatalogueDataset
 
 
 # START: Reuse memory-mapped raw blocks, with HoCRS2's title-only text supervision.
-class GroundingSourceDataset(HoCRSAlignmentDataset):
+class GroundingSourceDataset(GroundingCatalogueDataset):
     def __init__(self, dataset_path, views):
         super().__init__(dataset_path, views)
         with (Path(dataset_path) / "movies_info.csv").open(

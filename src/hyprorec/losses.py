@@ -1,4 +1,4 @@
-"""Shared contrastive objectives used by alignment and joint Grounding."""
+"""Contrastive objectives used by the standalone Grounding stage."""
 
 from __future__ import annotations
 

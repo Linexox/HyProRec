@@ -23,11 +23,9 @@ class ModelArguments:
     hypergraph_dropout: float = 0.0
     use_hypergraph_encoder: bool = True
     grounding_checkpoint_path: str | None = None
-    use_source_projector: bool = False
-    grounding_weight: float = 0.0
     grounding_ga_sa_weight: float = 1.0
-    grounding_ga_sn_weight: float = 1.0
-    grounding_sa_sn_weight: float = 0.0
+    grounding_ga_sn_weight: float = 3.0
+    grounding_sa_sn_weight: float = 3.0
     grounding_temperature: float = 0.07
     item_table_init: str = "random"
     train_item_table: bool = True
@@ -36,7 +34,7 @@ class ModelArguments:
     recommendation_dropout: float = 0.0
     recommendation_temperature: float = 0.07
     use_moe: bool = False
-    moe_num_experts: int = 2
+    moe_num_experts: int = 4
     moe_hidden_dim: int = 512
     moe_router_temperature: float = 1.0
     moe_residual_scale_init: float = 1.0
@@ -44,28 +42,8 @@ class ModelArguments:
     def __post_init__(self) -> None:
         if self.item_table_init not in {"aligned_content", "random"}:
             raise ValueError("item_table_init must be 'aligned_content' or 'random'.")
-        if self.grounding_weight < 0 or any(
-            weight < 0
-            for weight in (
-                self.grounding_ga_sa_weight,
-                self.grounding_ga_sn_weight,
-                self.grounding_sa_sn_weight,
-            )
-        ):
-            raise ValueError("Grounding weights must be non-negative.")
         if self.grounding_temperature <= 0:
             raise ValueError("grounding_temperature must be positive.")
-        # START: The standalone Grounding stage has its own trainable source encoder.
-        if (
-            self.grounding_weight > 0
-            and self.grounding_sa_sn_weight > 0
-            and not self.use_source_projector
-        ):
-            raise ValueError(
-                "grounding_sa_sn_weight has no trainable effect without "
-                "use_source_projector."
-            )
-        # END: The standalone Grounding stage has its own trainable source encoder.
 
 
 @dataclass
@@ -86,31 +64,6 @@ class DataArguments:
         unknown_views = set(self.views) - set(GRAPH_VIEWS)
         if unknown_views:
             raise ValueError(f"Unknown graph views: {sorted(unknown_views)}")
-
-
-@dataclass
-class AlignmentArguments:
-    dataset_path: str = "data/lhf-redial"
-    modalities: list[str] = field(default_factory=lambda: list(GRAPH_VIEWS[1:]))
-    txt_model_name_or_path: str = "sentence-transformers/all-mpnet-base-v2"
-    img_model_name_or_path: str = "google/vit-base-patch16-224-in21k"
-    ado_model_name_or_path: str = "facebook/wav2vec2-base"
-    vdo_model_name_or_path: str = "MCG-NJU/videomae-base"
-    alignment_dim: int = 256
-    temperature: float = 0.07
-    validation_ratio: float = 0.1
-    max_text_length: int = 128
-
-    def __post_init__(self) -> None:
-        modalities = tuple(GRAPH_VIEWS[1:])
-        self.modalities = list(dict.fromkeys(self.modalities))
-        unknown = set(self.modalities) - set(modalities)
-        if unknown:
-            raise ValueError(f"Unknown alignment modalities: {sorted(unknown)}")
-        if len(self.modalities) < 2:
-            raise ValueError("Alignment requires at least two modalities.")
-        if not 0.0 < self.validation_ratio < 1.0:
-            raise ValueError("validation_ratio must be in (0, 1).")
 
 
 @dataclass
@@ -154,7 +107,6 @@ class HoCRSTrainingArguments(TrainingArguments):
 
 
 __all__ = [
-    "AlignmentArguments",
     "DataArguments",
     "HoCRSTrainingArguments",
     "ModelArguments",

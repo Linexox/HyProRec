@@ -26,7 +26,7 @@ class GraphTokenMoETest(unittest.TestCase):
         self.assertTrue(torch.allclose(weights.sum(dim=-1), torch.ones(5)))
         self.assertFalse(torch.isnan(weights).any())
 
-    def test_moe_mode_disables_view_gate_and_reports_diagnostics(self) -> None:
+    def test_moe_mode_creates_router_and_experts(self) -> None:
         backbone_config = GPT2Config(
             vocab_size=32,
             n_embd=8,
@@ -54,7 +54,6 @@ class GraphTokenMoETest(unittest.TestCase):
         model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
 
         self.assertIsNotNone(model.moe)
-        self.assertFalse(model.view_gates["txt"].requires_grad)
         self.assertEqual(model.moe.view_embeddings.shape, (1, 8))
 
 

@@ -23,7 +23,6 @@ from ..processing_hocrs import HoCRSProcessor
 
 
 def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
-    # START: Load only enabled semantic views and retain their native widths.
     dataset_path = Path(data_args.dataset_path)
     embedding_path = dataset_path / data_args.embeddings_dir_name
     tables = {
@@ -37,7 +36,6 @@ def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
     }
     if any(table.ndim != 2 for table in tables.values()):
         raise ValueError("Every modality embedding table must be two-dimensional.")
-    # END: Load only enabled semantic views and retain their native widths.
     return tables
 
 
@@ -91,12 +89,6 @@ def _build_model(
         ),
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
-        use_source_projector=model_args.use_source_projector,
-        grounding_weight=model_args.grounding_weight,
-        grounding_ga_sa_weight=model_args.grounding_ga_sa_weight,
-        grounding_ga_sn_weight=model_args.grounding_ga_sn_weight,
-        grounding_sa_sn_weight=model_args.grounding_sa_sn_weight,
-        grounding_temperature=model_args.grounding_temperature,
         item_table_init=model_args.item_table_init,
         train_item_table=model_args.train_item_table,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
@@ -208,32 +200,19 @@ def main() -> None:
                 f"{hypergraph_table.num_items} and {model.config.num_items}."
             )
 
-    train_dataset = (
-        HoCRSDataset(dataset_config, "train", hypergraph_table)
-        if training_args.do_train
-        else None
-    )
-    eval_dataset = (
-        HoCRSDataset(dataset_config, "validation", hypergraph_table)
-        if training_args.do_eval
-        else None
-    )
-    test_dataset = (
-        HoCRSDataset(dataset_config, "test", hypergraph_table)
-        if training_args.do_predict
-        else None
-    )
+    train_dataset = HoCRSDataset(dataset_config, "train", hypergraph_table) if training_args.do_train else None
+    eval_dataset = HoCRSDataset(dataset_config, "validation", hypergraph_table) if training_args.do_eval else None
+    test_dataset = HoCRSDataset(dataset_config, "test", hypergraph_table) if training_args.do_predict else None
+
     trainer = Trainer(
         model=model,
         args=training_args,
-        # START: Pass explicit history and response budgets to the CRS collator.
         data_collator=HoCRSDataCollator(
             processor,
             max_length=data_args.max_length,
             max_history_tokens=data_args.max_history_tokens,
             max_response_tokens=data_args.max_response_tokens,
         ),
-        # END: Pass explicit history and response budgets to the CRS collator.
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=processor,
@@ -252,9 +231,7 @@ def main() -> None:
         )
 
     if training_args.do_train:
-        train_result = trainer.train(
-            resume_from_checkpoint=_resolve_resume_checkpoint(training_args)
-        )
+        train_result = trainer.train(resume_from_checkpoint=_resolve_resume_checkpoint(training_args))
         trainer.save_model()
         trainer.save_state()
         trainer.log_metrics("train", train_result.metrics)

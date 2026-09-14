@@ -86,20 +86,15 @@ def recommendation_metrics(
 
 
 def preprocess_logits_for_metrics(logits, _labels):
-    # START: Preserve the established metric tuple and append joint Grounding.
     (
         lm_logits,
         rec_scores,
         rec_loss,
         conv_loss,
-        grounding_loss,
-        grounding_ga_sa_loss,
-        grounding_ga_sn_loss,
-        grounding_sa_sn_loss,
-    ) = logits[:8]
-    moe_usage = logits[8] if len(logits) > 8 else rec_loss.new_zeros(())
-    moe_router_entropy = logits[9] if len(logits) > 9 else rec_loss.new_zeros(())
-    moe_view_usage = logits[10] if len(logits) > 10 else rec_loss.new_zeros((0, 0))
+    ) = logits[:4]
+    moe_usage = logits[4] if len(logits) > 4 else rec_loss.new_zeros(())
+    moe_router_entropy = logits[5] if len(logits) > 5 else rec_loss.new_zeros(())
+    moe_view_usage = logits[6] if len(logits) > 6 else rec_loss.new_zeros((0, 0))
     topk = rec_scores.topk(min(50, rec_scores.size(-1)), dim=-1).indices
     token_predictions = lm_logits[:, :-1].argmax(dim=-1)
     batch_size = rec_scores.size(0)
@@ -118,15 +113,10 @@ def preprocess_logits_for_metrics(logits, _labels):
         token_predictions,
         rec_loss.reshape(1).expand(batch_size),
         conv_loss.reshape(1).expand(batch_size),
-        grounding_loss.reshape(1).expand(batch_size),
-        grounding_ga_sa_loss.reshape(1).expand(batch_size),
-        grounding_ga_sn_loss.reshape(1).expand(batch_size),
-        grounding_sa_sn_loss.reshape(1).expand(batch_size),
         batch_moe_usage,
         moe_router_entropy.reshape(1).expand(batch_size),
         batch_moe_view_usage,
     )
-    # END: Preserve the established metric tuple and append joint Grounding.
 
 
 def build_compute_metrics(processor) -> callable:
@@ -138,10 +128,6 @@ def build_compute_metrics(processor) -> callable:
             token_predictions,
             rec_losses,
             conv_losses,
-            grounding_losses,
-            grounding_ga_sa_losses,
-            grounding_ga_sn_losses,
-            grounding_sa_sn_losses,
             moe_usages,
             moe_router_entropies,
             moe_view_usages,
@@ -159,10 +145,6 @@ def build_compute_metrics(processor) -> callable:
         metrics = recommendation_metrics(recommendations.tolist(), rec_labels.tolist())
         metrics["rec_loss"] = float(rec_losses.mean())
         metrics["conv_loss"] = float(conv_losses.mean())
-        metrics["grounding_loss"] = float(grounding_losses.mean())
-        metrics["grounding_ga_sa_loss"] = float(grounding_ga_sa_losses.mean())
-        metrics["grounding_ga_sn_loss"] = float(grounding_ga_sn_losses.mean())
-        metrics["grounding_sa_sn_loss"] = float(grounding_sa_sn_losses.mean())
         if moe_usages.ndim > 1 and moe_usages.shape[-1] > 0:
             for index, value in enumerate(moe_usages.mean(axis=0)):
                 metrics[f"moe_expert_{index}_usage"] = float(value)

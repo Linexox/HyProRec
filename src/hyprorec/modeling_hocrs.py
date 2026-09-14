@@ -14,10 +14,8 @@ from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import ModelOutput
 
 from .configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
-from .losses import multi_positive_contrastive_loss
 
 
-# START: Load only Omni Thinker, while retaining the existing causal-LM path.
 def load_backbone(name_or_path: str) -> nn.Module:
     config = AutoConfig.from_pretrained(name_or_path)
     if config.model_type in {"qwen2_5_omni", "qwen2_5_omni_thinker"}:
@@ -35,7 +33,6 @@ def _backbone_from_config(config) -> nn.Module:
 
         return Qwen2_5OmniThinkerForConditionalGeneration(config)
     return AutoModelForCausalLM.from_config(config)
-# END: Load only Omni Thinker, while retaining the existing causal-LM path.
 
 
 def _hidden_size(config) -> int:
@@ -79,15 +76,9 @@ class HoCRSOutput(ModelOutput):
     rec_scores: torch.Tensor | None = None
     rec_loss: torch.Tensor | None = None
     conv_loss: torch.Tensor | None = None
-    # START: Expose the unweighted joint Grounding loss for evaluation logs.
-    grounding_loss: torch.Tensor | None = None
-    grounding_ga_sa_loss: torch.Tensor | None = None
-    grounding_ga_sn_loss: torch.Tensor | None = None
-    grounding_sa_sn_loss: torch.Tensor | None = None
     moe_usage: torch.Tensor | None = None
     moe_router_entropy: torch.Tensor | None = None
     moe_view_usage: torch.Tensor | None = None
-    # END: Expose the unweighted joint Grounding loss for evaluation logs.
     past_key_values: Any | None = None
     hidden_states: tuple[torch.Tensor, ...] | None = None
     attentions: tuple[torch.Tensor, ...] | None = None
@@ -295,35 +286,8 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
 
         self.hypergraph_encoders = nn.ModuleDict()
         self.hypergraph_projectors = nn.ModuleDict()
-        semantic_input_dims = {
-            config.get_hypergraph_config(view).input_dim
-            for view in config.views
-            if view != "co"
-        }
-        if config.use_source_projector and len(semantic_input_dims) != 1:
-            raise ValueError(
-                "A shared source projector requires equal-width semantic tables."
-            )
-        # START: The same optional projector defines graph inputs and source targets.
-        self.source_projector = None
-        if config.use_source_projector:
-            source_dim = next(
-                config.get_hypergraph_config(view).input_dim
-                for view in config.views
-                if view != "co"
-            )
-            self.source_projector = nn.Linear(source_dim, source_dim)
-        # END: The same optional projector defines graph inputs and source targets.
         for view in config.views:
             graph_config = config.get_hypergraph_config(view)
-            if (
-                view != "co"
-                and config.grounding_weight > 0
-                and graph_config.output_dim != graph_config.input_dim
-            ):
-                raise ValueError(
-                    "Joint Grounding requires equal source and graph output widths."
-                )
             if config.use_hypergraph_encoder:
                 self.hypergraph_encoders[view] = HypergraphEncoder(graph_config)
             projector_input_dim = (
@@ -332,6 +296,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 else graph_config.input_dim
             )
             self.hypergraph_projectors[view] = HypergraphProjector(projector_input_dim, lm_hidden_size)
+
             if view == "co":
                 self.co_feature_table = nn.Parameter(torch.empty(config.num_items, graph_config.input_dim))
                 nn.init.normal_(self.co_feature_table, mean=0.0, std=0.02)
@@ -342,13 +307,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                     persistent=True,
                 )
 
-        # START: learnable per-view scalar gates for CRS fusion.
-        self.view_gates = nn.ParameterDict(
-            {
-                view: nn.Parameter(torch.tensor(1.0))
-                for view in config.views
-            }
-        )
         self.moe = (
             GraphTokenMoE(
                 hidden_size=lm_hidden_size,
@@ -361,11 +319,8 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             if config.use_moe and config.views
             else None
         )
-        # END: learnable per-view scalar gates for CRS fusion.
         self.recommendation_head = HoCRSRecommendationHead(lm_hidden_size, config)
-        self.recommendation_head.item_table.weight.requires_grad_(
-            config.train_item_table
-        )
+        self.recommendation_head.item_table.weight.requires_grad_(config.train_item_table)
         self.soft_prompt_embeddings = nn.Embedding(
             config.num_soft_prompt_tokens,
             lm_hidden_size,
@@ -386,25 +341,16 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             )
         )
         self.post_init()
-        # Modified: preserve the aligned source geometry at projector initialization.
-        if self.source_projector is not None:
-            nn.init.eye_(self.source_projector.weight)
-            nn.init.zeros_(self.source_projector.bias)
         if self.moe is not None:
             self.moe.reset_output_layers()
-        if self.config.use_moe:
-            for gate in self.view_gates.values():
-                gate.requires_grad_(False)
         self._initialize_special_token_embeddings()
         if config.freeze_backbone:
             self.backbone.requires_grad_(False)
 
     def _initialize_special_token_embeddings(self) -> None:
-        if self.special_token_embeddings is None:
-            return
+        if self.special_token_embeddings is None: return
         source_embeddings = self.get_input_embeddings().weight
-        if source_embeddings.device.type == "meta":
-            return
+        if source_embeddings.device.type == "meta": return
         token_ids = torch.tensor(
             self.config.trainable_special_token_ids,
             dtype=torch.long,
@@ -423,8 +369,9 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
     ) -> None:
         semantic_views = set(self.config.views) - {"co"}
         missing = semantic_views - set(feature_tables)
-        if missing:
-            raise ValueError(f"Missing feature tables: {sorted(missing)}")
+        assert not missing, f"Missing feature tables: {sorted(missing)}"
+        # if missing:
+            # raise ValueError(f"Missing feature tables: {sorted(missing)}")
         with torch.no_grad():
 
             # Initialize modality-based hypergraph node init features
@@ -460,7 +407,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                     raise ValueError("The Item Table content initialization has an incompatible shape.")
                 self.recommendation_head.item_table.weight.copy_(content)
 
-    # START: Load frozen towers and optional HoCRS2 projector initialization.
     def load_grounding_checkpoint(self, path: str) -> None:
         checkpoint = self._load_pretrained_state_dict(path)
         for view, encoder in self.hypergraph_encoders.items():
@@ -470,8 +416,9 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 for name, value in checkpoint.items()
                 if name.startswith(prefix)
             }
-            if not view_state:
-                raise ValueError(f"Grounding checkpoint has no '{view}' encoder.")
+            assert view_state, f"Grounding checkpoint has no '{view}' encoder."
+            # if not view_state:
+            #     raise ValueError(f"Grounding checkpoint has no '{view}' encoder.")
             encoder.load_state_dict(view_state)
             encoder.requires_grad_(False)
             projector_prefix = f"hypergraph_projectors.{view}."
@@ -490,10 +437,8 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         safetensor_path = directory / "model.safetensors"
         if safetensor_path.exists():
             from safetensors.torch import load_file
-
             return load_file(str(safetensor_path), device="cpu")
         return torch.load(directory / "pytorch_model.bin", map_location="cpu")
-    # END: Load frozen towers and optional HoCRS2 projector initialization.
 
     def get_input_embeddings(self) -> nn.Module:
         return self.backbone.get_input_embeddings()
@@ -509,14 +454,13 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
 
     def train(self, mode: bool = True) -> HoCRSModel:
         super().train(mode)
-        if self.config.freeze_backbone:
-            self.backbone.eval()
+        # if self.config.freeze_backbone:
+        #     self.backbone.eval()
+        self.backbone.eval()
         return self
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None) -> None:
-        self.backbone.gradient_checkpointing_enable(
-            gradient_checkpointing_kwargs=gradient_checkpointing_kwargs
-        )
+        self.backbone.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gradient_checkpointing_kwargs)
 
     def gradient_checkpointing_disable(self) -> None:
         self.backbone.gradient_checkpointing_disable()
@@ -534,11 +478,12 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             for index, token_id in enumerate(self.config.trainable_special_token_ids):
                 result[input_ids == token_id] = embeddings[index]
 
+        # Inject soft prompt embeddings if they are trainable.
         if self.config.num_soft_prompt_tokens > 0:
-            if self.config.soft_prompt_token_id is None:
-                raise ValueError("soft_prompt_token_id is missing from HoCRSConfig.")
+            assert self.soft_prompt_embeddings is not None
+            # if self.config.soft_prompt_token_id is None:
+            #     raise ValueError("soft_prompt_token_id is missing from HoCRSConfig.")
 
-            # Inject soft prompt embeddings.
             positions = torch.nonzero(input_ids == self.config.soft_prompt_token_id, as_tuple=False)
             expected = input_ids.size(0) * self.config.num_soft_prompt_tokens
             if positions.size(0) != expected:
@@ -557,12 +502,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         hypergraphs: Mapping[str, Mapping[str, torch.Tensor]],
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         result = inputs_embeds.clone()
-        grounding_losses = []
-        component_losses: dict[str, list[torch.Tensor]] = {
-            "ga_sa": [],
-            "ga_sn": [],
-            "sa_sn": [],
-        }
         moe_weights: list[torch.Tensor] = []
         moe_view_weights: list[torch.Tensor] = []
         for view in self.config.views:
@@ -574,10 +513,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             node_ids = graph["node_ids"]
             feature_table = getattr(self, f"{view}_feature_table")
             source_features = feature_table.index_select(0, node_ids)
-            if view != "co" and self.source_projector is not None:
-                source_features = F.normalize(
-                    self.source_projector(source_features), dim=-1
-                )
             node_features = source_features
             num_hyperedges = int(graph["edge_ptr"][-1].item())
             if self.config.use_hypergraph_encoder:
@@ -586,21 +521,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                     graph["hyperedge_index"],
                     num_hyperedges,
                 )
-                if view != "co" and self.config.grounding_weight > 0:
-                    view_components = self._grounding_loss(
-                        encoded.node_features,
-                        source_features,
-                        graph,
-                    )
-                    if view_components:
-                        grounding_losses.append(
-                            sum(
-                                getattr(self.config, f"grounding_{name}_weight") * value
-                                for name, value in view_components.items()
-                            )
-                        )
-                        for name, value in view_components.items():
-                            component_losses[name].append(value)
             else:
                 encoded = _average_hyperedges(
                     node_features,
@@ -627,22 +547,12 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 moe_weights.append(weights)
                 moe_view_weights.append(weights.mean(dim=0))
             else:
-                gate = self.view_gates[view]
-                projected_nodes = projected.node_features * gate
-                projected_edges = projected.hyperedge_features * gate
+                projected_nodes = projected.node_features
+                projected_edges = projected.hyperedge_features
             result[node_positions[:, 0], node_positions[:, 1]] = projected_nodes.to(result.dtype)
             result[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = projected_edges.to(result.dtype)
 
         zero = result.sum() * 0.0
-        grounding = {
-            "loss": (
-                torch.stack(grounding_losses).mean() if grounding_losses else zero
-            ),
-            **{
-                name: torch.stack(values).mean() if values else zero
-                for name, values in component_losses.items()
-            },
-        }
         if moe_weights:
             all_weights = torch.cat(moe_weights, dim=0)
             moe_usage = all_weights.mean(dim=0)
@@ -657,65 +567,10 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             moe_router_entropy = zero
             moe_view_usage = zero.new_zeros((len(self.config.views), 0))
         return result, {
-            **grounding,
             "moe_usage": moe_usage,
             "moe_router_entropy": moe_router_entropy,
             "moe_view_usage": moe_view_usage,
         }
-
-    def _grounding_loss(
-        self,
-        graph_anchor_features: torch.Tensor,
-        source_features: torch.Tensor,
-        graph: Mapping[str, torch.Tensor],
-    ) -> dict[str, torch.Tensor]:
-        """Align graph anchors with their fixed/projected source neighborhood."""
-
-        anchor_index = graph["hyperedge_anchor_index"]
-        node_ids = graph["node_ids"]
-        anchor_ids = node_ids.index_select(0, anchor_index)
-        graph_anchors = graph_anchor_features.index_select(0, anchor_index)
-        source_anchors = source_features.index_select(0, anchor_index)
-        node_index, edge_index = graph["hyperedge_index"]
-        num_edges = anchor_index.numel()
-        is_neighbor = node_index.ne(anchor_index.index_select(0, edge_index))
-        neighbor_nodes = node_index[is_neighbor]
-        neighbor_edges = edge_index[is_neighbor]
-        neighbor_sum = source_features.new_zeros((num_edges, source_features.size(-1)))
-        neighbor_sum.index_add_(0, neighbor_edges, source_features[neighbor_nodes])
-        neighbor_count = torch.bincount(neighbor_edges, minlength=num_edges)
-        valid_neighbors = neighbor_count > 0
-        source_neighbors = neighbor_sum / neighbor_count.clamp_min(1).unsqueeze(-1)
-
-        terms = {}
-        ga_sa = multi_positive_contrastive_loss(
-            graph_anchors,
-            source_anchors,
-            anchor_ids,
-            self.config.grounding_temperature,
-        )
-        if ga_sa is not None and self.config.grounding_ga_sa_weight > 0:
-            terms["ga_sa"] = ga_sa
-        if valid_neighbors.any():
-            neighbor_ids = anchor_ids[valid_neighbors]
-            ga_sn = multi_positive_contrastive_loss(
-                graph_anchors[valid_neighbors],
-                source_neighbors[valid_neighbors],
-                neighbor_ids,
-                self.config.grounding_temperature,
-            )
-            if ga_sn is not None and self.config.grounding_ga_sn_weight > 0:
-                terms["ga_sn"] = ga_sn
-            if self.config.grounding_sa_sn_weight > 0:
-                sa_sn = multi_positive_contrastive_loss(
-                    source_anchors[valid_neighbors],
-                    source_neighbors[valid_neighbors],
-                    neighbor_ids,
-                    self.config.grounding_temperature,
-                )
-                if sa_sn is not None:
-                    terms["sa_sn"] = sa_sn
-        return terms
 
     def forward(
         self,
@@ -730,35 +585,28 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
     ) -> HoCRSOutput:
         kwargs.pop("return_dict", None)
         kwargs.pop("output_hidden_states", None)
-        # START: Let GenerationMixin pass cached inputs without duplicating embeds.
         kwargs.pop("inputs_embeds", None)
-        # END: Let GenerationMixin pass cached inputs without duplicating embeds.
         inputs_embeds = self.get_input_embeddings()(input_ids)
         is_cached_step = _cache_has_content(past_key_values)
         zero = inputs_embeds.sum() * 0.0
-        grounding = {name: zero for name in ("loss", "ga_sa", "ga_sn", "sa_sn")}
-        moe_diagnostics: dict[str, torch.Tensor | None] = {
-            "moe_usage": None,
-            "moe_router_entropy": None,
-            "moe_view_usage": None,
-        }
+        #     "moe_usage": None,
+        #     "moe_router_entropy": None,
+        #     "moe_view_usage": None,
+        # }
         if not is_cached_step:
             inputs_embeds = self._inject_special_embeddings(input_ids, inputs_embeds)
             if self.config.views:
-                if hypergraphs is None:
-                    raise ValueError("Active graph views require hypergraph inputs.")
-                inputs_embeds, grounding = self._inject_hypergraphs(
-                    inputs_embeds, hypergraphs
-                )
-                injected_moe_diagnostics = {
-                    name: grounding.pop(name) for name in moe_diagnostics
-                }
-                if self.moe is not None:
-                    moe_diagnostics = injected_moe_diagnostics
-        # START: Thinker needs token IDs for its RoPE bookkeeping, even with injected embeddings.
+                # if hypergraphs is None:
+                #     raise ValueError("Active graph views require hypergraph inputs.")
+                inputs_embeds, moe_diagnostics = self._inject_hypergraphs(inputs_embeds, hypergraphs)
+                # injected_moe_diagnostics = {
+                #     name: grounding.pop(name) for name in moe_diagnostics
+                # }
+                # if self.moe is not None:
+                #     moe_diagnostics = injected_moe_diagnostics
         if self.config.backbone_config.model_type == "qwen2_5_omni_thinker":
             kwargs["input_ids"] = input_ids
-        # END: Thinker needs token IDs for its RoPE bookkeeping, even with injected embeddings.
+
         backbone_output = self.backbone(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
@@ -777,15 +625,15 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 hidden_states=backbone_output.hidden_states,
                 attentions=getattr(backbone_output, "attentions", None),
             )
-        if self.config.rec_token_id is None:
-            raise ValueError("rec_token_id is missing from HoCRSConfig.")
+        # if self.config.rec_token_id is None:
+        #     raise ValueError("rec_token_id is missing from HoCRSConfig.")
+        assert self.config.rec_token_id is not None, "rec_token_id is missing from HoCRSConfig."
         rec_mask = input_ids == self.config.rec_token_id
-        counts = rec_mask.sum(dim=1)
-        if not torch.all(counts == 1):
+        # counts = rec_mask.sum(dim=1)
+        if not torch.all(rec_mask.sum(dim=1) == 1):
             raise ValueError("Every sample must contain exactly one recommendation token.")
         rec_hidden = backbone_output.hidden_states[-1][rec_mask]
         rec_scores = self.recommendation_head(rec_hidden)
-
         if rec_labels is not None:
             rec_loss = F.cross_entropy(rec_scores, rec_labels)
         else:
@@ -797,7 +645,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             loss = (
                 self.config.beta * rec_loss
                 + (1.0 - self.config.beta) * conv_loss
-                + self.config.grounding_weight * grounding["loss"]
             )
 
         return HoCRSOutput(
@@ -806,10 +653,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             rec_scores=rec_scores,
             rec_loss=rec_loss,
             conv_loss=conv_loss,
-            grounding_loss=grounding["loss"],
-            grounding_ga_sa_loss=grounding["ga_sa"],
-            grounding_ga_sn_loss=grounding["ga_sn"],
-            grounding_sa_sn_loss=grounding["sa_sn"],
             moe_usage=moe_diagnostics["moe_usage"],
             moe_router_entropy=moe_diagnostics["moe_router_entropy"],
             moe_view_usage=moe_diagnostics["moe_view_usage"],

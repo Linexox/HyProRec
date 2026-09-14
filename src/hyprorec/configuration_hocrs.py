@@ -81,19 +81,13 @@ class HoCRSConfig(PretrainedConfig):
         item_dim: int = 2048,
         use_hypergraph_encoder: bool = True,
         grounding_checkpoint_path: str | None = None,
-        use_source_projector: bool = False,
-        grounding_weight: float = 0.0,                                                   # ***** FIXME *****
-        grounding_ga_sa_weight: float = 1.0,
-        grounding_ga_sn_weight: float = 1.0,
-        grounding_sa_sn_weight: float = 0.0,
-        grounding_temperature: float = 0.07,
         item_table_init: str = "random",
         train_item_table: bool = True,
         recommendation_hidden_dim: int = 2048,
         recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
         use_moe: bool = False,
-        moe_num_experts: int = 2,
+        moe_num_experts: int = 4,
         moe_hidden_dim: int = 512,
         moe_router_temperature: float = 1.0,
         moe_residual_scale_init: float = 1.0,
@@ -117,8 +111,6 @@ class HoCRSConfig(PretrainedConfig):
         super().__init__(**kwargs)
         views = tuple(dict.fromkeys(views))
         unknown_views = set(views) - set(GRAPH_VIEWS)
-        semantic_views = set(views) - {"co"}
-        
         if unknown_views:
             raise ValueError(f"Unknown graph views: {sorted(unknown_views)}")
         if not 0.0 <= beta <= 1.0:
@@ -127,17 +119,6 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("num_items must be positive.")
         if item_table_init not in {"aligned_content", "random"}:
             raise ValueError("Unknown Item Table initialization strategy.")
-        if grounding_weight < 0 or any(
-            weight < 0
-            for weight in (
-                grounding_ga_sa_weight,
-                grounding_ga_sn_weight,
-                grounding_sa_sn_weight,
-            )
-        ):
-            raise ValueError("Grounding weights must be non-negative.")
-        if grounding_temperature <= 0:
-            raise ValueError("grounding_temperature must be positive.")
         if moe_num_experts < 2:
             raise ValueError("moe_num_experts must be at least 2.")
         if moe_hidden_dim < 1:
@@ -148,12 +129,6 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("moe_residual_scale_init must be non-negative.")
         if use_moe and "co" in views:
             raise ValueError("The token MoE branch only supports txt/img/ado/vdo views.")
-        if grounding_weight > 0 and not semantic_views:
-            raise ValueError("Joint Grounding requires at least one semantic view.")
-        if grounding_weight > 0 and not use_hypergraph_encoder:
-            raise ValueError("Joint Grounding requires use_hypergraph_encoder=true.")
-        if grounding_sa_sn_weight > 0 and not use_source_projector:
-            raise ValueError("grounding_sa_sn_weight has no trainable effect without a source projector.")
 
         self.views = views
         self.co_hypergraph_config = _hypergraph_config(co_hypergraph_config)
@@ -165,12 +140,6 @@ class HoCRSConfig(PretrainedConfig):
         self.item_dim = item_dim
         self.use_hypergraph_encoder = use_hypergraph_encoder
         self.grounding_checkpoint_path = grounding_checkpoint_path
-        self.use_source_projector = use_source_projector
-        self.grounding_weight = grounding_weight
-        self.grounding_ga_sa_weight = grounding_ga_sa_weight
-        self.grounding_ga_sn_weight = grounding_ga_sn_weight
-        self.grounding_sa_sn_weight = grounding_sa_sn_weight
-        self.grounding_temperature = grounding_temperature
         self.item_table_init = item_table_init
         self.train_item_table = train_item_table
         self.recommendation_hidden_dim = recommendation_hidden_dim
