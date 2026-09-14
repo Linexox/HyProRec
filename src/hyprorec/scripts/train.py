@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, Trainer, set_seed  # Modified: seed before constructing modules.
+from transformers import AutoTokenizer, Trainer, TrainerCallback, set_seed  # Modified: seed before constructing modules.
 from transformers.trainer_utils import get_last_checkpoint
 
 from ..arguments import DataArguments, ModelArguments
@@ -134,6 +134,26 @@ def _resolve_resume_checkpoint(training_args) -> str | None:
     return get_last_checkpoint(str(output_dir))
 
 
+class TestEvaluationCallback(TrainerCallback):
+    """Run held-out test evaluation after each completed training epoch."""
+
+    def __init__(self, test_dataset):
+        self.test_dataset = test_dataset
+        self.trainer = None
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        if self.trainer is None:
+            return control
+        metrics = self.trainer.evaluate(
+            eval_dataset=self.test_dataset,
+            metric_key_prefix="test",
+        )
+        if self.trainer.is_world_process_zero():
+            self.trainer.log_metrics("test", metrics)
+            self.trainer.save_metrics("test", metrics)
+        return control
+
+
 def _save_experiment_provenance(
     output_dir: str,
     config_path: Path,
@@ -204,6 +224,7 @@ def main() -> None:
     eval_dataset = HoCRSDataset(dataset_config, "validation", hypergraph_table) if training_args.do_eval else None
     test_dataset = HoCRSDataset(dataset_config, "test", hypergraph_table) if training_args.do_predict else None
 
+    test_callback = TestEvaluationCallback(test_dataset) if test_dataset is not None else None
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -218,7 +239,10 @@ def main() -> None:
         processing_class=processor,
         compute_metrics=build_compute_metrics(processor),
         preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+        callbacks=[test_callback] if test_callback is not None else None,
     )
+    if test_callback is not None:
+        test_callback.trainer = trainer
 
     if trainer.is_world_process_zero():
         processor.save_pretrained(training_args.output_dir)
