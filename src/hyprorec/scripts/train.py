@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import copy
 from dataclasses import asdict
 from pathlib import Path
 
@@ -144,6 +145,7 @@ class TestEvaluationCallback(TrainerCallback):
     def on_epoch_end(self, args, state, control, **kwargs):
         if self.trainer is None:
             return control
+        training_control = copy(control)
         metrics = self.trainer.evaluate(
             eval_dataset=self.test_dataset,
             metric_key_prefix="test",
@@ -151,7 +153,8 @@ class TestEvaluationCallback(TrainerCallback):
         if self.trainer.is_world_process_zero():
             self.trainer.log_metrics("test", metrics)
             self.trainer.save_metrics("test", metrics)
-        return control
+        self.trainer.control = training_control
+        return training_control
 
 
 def _save_experiment_provenance(
@@ -222,7 +225,7 @@ def main() -> None:
 
     train_dataset = HoCRSDataset(dataset_config, "train", hypergraph_table) if training_args.do_train else None
     eval_dataset = HoCRSDataset(dataset_config, "validation", hypergraph_table) if training_args.do_eval else None
-    test_dataset = HoCRSDataset(dataset_config, "test", hypergraph_table) if training_args.do_predict else None
+    test_dataset = HoCRSDataset(dataset_config, "test", hypergraph_table) if (training_args.do_train or training_args.do_predict) else None
 
     test_callback = TestEvaluationCallback(test_dataset) if test_dataset is not None else None
     trainer = Trainer(
