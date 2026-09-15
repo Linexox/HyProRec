@@ -19,9 +19,7 @@ class HypergraphData:
     view: str
     node_ids: torch.Tensor
     hyperedge_index: torch.Tensor
-    # START: Preserve each hyperedge anchor for the v3 Grounding objective.
     hyperedge_anchor_index: torch.Tensor
-    # END: Preserve each hyperedge anchor for the v3 Grounding objective.
 
     @classmethod
     def from_hyperedges(
@@ -68,20 +66,19 @@ class HypergraphData:
     def num_hyperedges(self) -> int:
         return int(self.hyperedge_index[1].max().item()) + 1
 
-    # START: Support whole-hyperedge removal during final prompt fitting.
     def truncate_hyperedges(self, count: int) -> HypergraphData:
-        if not 1 <= count <= self.num_hyperedges:
-            raise ValueError("count must retain at least one hyperedge.")
-        if count == self.num_hyperedges:
-            return self
-        node_index, edge_index = self.hyperedge_index
-        hyperedges = []
-        for edge_id in range(count):
-            members = self.node_ids[node_index[edge_index == edge_id]].tolist()
-            anchor_id = int(self.node_ids[self.hyperedge_anchor_index[edge_id]])
-            hyperedges.append((anchor_id, [item for item in members if item != anchor_id]))
-        return HypergraphData.from_hyperedges(self.view, hyperedges)
-    # END: Support whole-hyperedge removal during final prompt fitting.
+        return self
+        # if not 1 <= count <= self.num_hyperedges:
+        #     raise ValueError("count must retain at least one hyperedge.")
+        # if count == self.num_hyperedges:
+        #     return self
+        # node_index, edge_index = self.hyperedge_index
+        # hyperedges = []
+        # for edge_id in range(count):
+        #     members = self.node_ids[node_index[edge_index == edge_id]].tolist()
+        #     anchor_id = int(self.node_ids[self.hyperedge_anchor_index[edge_id]])
+        #     hyperedges.append((anchor_id, [item for item in members if item != anchor_id]))
+        # return HypergraphData.from_hyperedges(self.view, hyperedges)
 
 
 class HypergraphTable:
@@ -131,7 +128,10 @@ class HypergraphTable:
             raise ValueError("topk must be non-negative and khop must be positive.")
 
         anchors = [anchor_ids] if isinstance(anchor_ids, int) else list(anchor_ids)
-        assert anchors, "At least one anchor id is required."
+        # assert anchors, "At least one anchor id is required."
+        if not anchors:
+            return HypergraphData.from_hyperedges(view, [])
+        
         # Modified: let the 120-node graph budget, rather than a small anchor cap, bound retrieval.
         frontier = list(dict.fromkeys(reversed(anchors)))[:256]
         visited: set[int] = set()

@@ -28,7 +28,7 @@ data:
   max_history_tokens: 1024
   max_response_tokens: 64
 training:
-  output_dir: outputs/redial/hocrs/full-moe-token-v4
+  output_dir: outputs/redial/hocrs/full-moe-token-v4-h1024
   do_train: true
   do_eval: true
   do_predict: true
@@ -48,6 +48,6 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   report_to: wandb
-  run_name: full-moe-token-v4
+  run_name: full-moe-token-v4-h1024
   seed: 42
   data_seed: 42

@@ -192,7 +192,6 @@ def main() -> None:
         tokenizer=tokenizer,
         num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
     )
-    # START: Load prepared features without performing online fusion.
     modality_tables = _load_modality_tables(data_args)
     content_table = _load_content_table(data_args)
     model = _build_model(
@@ -202,7 +201,6 @@ def main() -> None:
         modality_tables,
         content_table,
     )
-    # END: Load prepared features without performing online fusion.
 
     dataset_config = HoCRSDatasetConfig(
         dataset_path=data_args.dataset_path,

@@ -499,14 +499,15 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
     def _inject_hypergraphs(
         self,
         inputs_embeds: torch.Tensor,
-        hypergraphs: Mapping[str, Mapping[str, torch.Tensor]],
+        hypergraphs: Mapping[str, Mapping[str, torch.Tensor]] | None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         result = inputs_embeds.clone()
+        hypergraphs = hypergraphs or {}
         moe_weights: list[torch.Tensor] = []
-        moe_view_weights: list[torch.Tensor] = []
+        moe_view_weights: dict[str, torch.Tensor] = {}
         for view in self.config.views:
             if view not in hypergraphs:
-                raise ValueError(f"Missing '{view}' hypergraph batch.")
+                continue
 
             # Build node and hyperedge features for projection.
             graph = hypergraphs[view]
@@ -545,7 +546,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 projected_nodes = graph_features[:node_count]
                 projected_edges = graph_features[node_count:]
                 moe_weights.append(weights)
-                moe_view_weights.append(weights.mean(dim=0))
+                moe_view_weights[view] = weights.mean(dim=0)
             else:
                 projected_nodes = projected.node_features
                 projected_edges = projected.hyperedge_features
@@ -561,11 +562,21 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 .sum(dim=-1)
                 .mean()
             )
-            moe_view_usage = torch.stack(moe_view_weights, dim=0)
+            moe_view_usage = torch.stack(
+                [
+                    moe_view_weights.get(
+                        view,
+                        zero.new_zeros(self.config.moe_num_experts),
+                    )
+                    for view in self.config.views
+                ],
+                dim=0,
+            )
         else:
-            moe_usage = zero
+            expert_count = self.config.moe_num_experts if self.moe is not None else 0
+            moe_usage = zero.new_zeros(expert_count)
             moe_router_entropy = zero
-            moe_view_usage = zero.new_zeros((len(self.config.views), 0))
+            moe_view_usage = zero.new_zeros((len(self.config.views), expert_count))
         return result, {
             "moe_usage": moe_usage,
             "moe_router_entropy": moe_router_entropy,
@@ -589,6 +600,12 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         inputs_embeds = self.get_input_embeddings()(input_ids)
         is_cached_step = _cache_has_content(past_key_values)
         zero = inputs_embeds.sum() * 0.0
+        expert_count = self.config.moe_num_experts if self.moe is not None else 0
+        moe_diagnostics = {
+            "moe_usage": zero.new_zeros(expert_count),
+            "moe_router_entropy": zero,
+            "moe_view_usage": zero.new_zeros((len(self.config.views), expert_count)),
+        }
         #     "moe_usage": None,
         #     "moe_router_entropy": None,
         #     "moe_view_usage": None,

@@ -199,6 +199,99 @@ class HoCRSModelTest(unittest.TestCase):
         )
         self.assertEqual(no_graph_output.rec_scores.shape, (1, 3))
 
+    def test_collator_keeps_graph_order_and_original_rows_with_text_only_sample(self) -> None:
+        processor = build_processor()
+        first = HypergraphData.from_hyperedges("co", [(0, [1])])
+        third = HypergraphData.from_hyperedges("co", [(2, [1])])
+
+        batch = HoCRSDataCollator(processor)(
+            [
+                {
+                    "context": "hello",
+                    "target_item_id": 1,
+                    "response": "reply",
+                    "hypergraphs": {"co": first},
+                },
+                {
+                    "context": "hello",
+                    "target_item_id": 1,
+                    "response": "reply",
+                    "hypergraphs": {},
+                },
+                {
+                    "context": "hello",
+                    "target_item_id": 1,
+                    "response": "reply",
+                    "hypergraphs": {"co": third},
+                },
+            ]
+        )
+
+        graph_batch = batch["hypergraphs"]["co"]
+        self.assertEqual(graph_batch["node_ids"].tolist(), [0, 1, 2, 1])
+        self.assertEqual(graph_batch["node_positions"][:, 0].tolist(), [0, 0, 2, 2])
+        self.assertEqual(graph_batch["hyperedge_positions"][:, 0].tolist(), [0, 2])
+
+    def test_all_graphless_batch_with_moe_has_finite_diagnostics(self) -> None:
+        processor = build_processor()
+        backbone_config = GPT2Config(
+            vocab_size=len(processor.tokenizer),
+            n_embd=16,
+            n_layer=1,
+            n_head=2,
+            n_positions=128,
+            bos_token_id=None,
+            eos_token_id=1,
+            pad_token_id=1,
+        )
+        graph_config = HoCRSHypergraphConfig(
+            input_dim=8,
+            hidden_dim=8,
+            output_dim=8,
+            num_layers=1,
+        )
+        config = HoCRSConfig(
+            backbone_config=backbone_config,
+            views=["txt"],
+            txt_hypergraph_config=graph_config,
+            num_items=3,
+            item_dim=8,
+            recommendation_hidden_dim=8,
+            num_soft_prompt_tokens=2,
+            use_moe=True,
+            moe_num_experts=4,
+            freeze_backbone=True,
+            train_special_tokens=True,
+            **processor.get_token_id_map(),
+        )
+        model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
+        model.initialize_feature_tables({"txt": torch.randn(3, 8)})
+        batch = HoCRSDataCollator(processor)(
+            [
+                {
+                    "context": "hello",
+                    "target_item_id": 1,
+                    "response": "reply",
+                    "hypergraphs": {},
+                },
+                {
+                    "context": "hello",
+                    "target_item_id": 2,
+                    "response": "reply",
+                    "hypergraphs": {},
+                },
+            ]
+        )
+
+        output = model(**batch)
+
+        self.assertEqual(output.moe_usage.shape, (4,))
+        self.assertEqual(output.moe_view_usage.shape, (1, 4))
+        self.assertTrue(torch.isfinite(output.moe_usage).all())
+        self.assertTrue(torch.isfinite(output.moe_view_usage).all())
+        self.assertTrue(torch.isfinite(output.moe_router_entropy))
+        output.loss.backward()
+
     def test_direct_projection_skips_hypergraph_encoder(self) -> None:
         processor = build_processor()
         backbone_config = GPT2Config(
