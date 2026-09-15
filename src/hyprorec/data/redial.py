@@ -36,10 +36,8 @@ class HoCRSDataset(Dataset):
 
     SPLIT_FILES = {
         "train": "train_data.json",
-        "validation": "eval_data.json",
-        "test": "eval_data.json",
-        # "validation": "valid_data.json",
-        # "test": "test_data.json",
+        "validation": "valid_data.json",
+        "test": "test_data.json",
     }
 
     def __init__(
@@ -138,9 +136,7 @@ class HoCRSDataCollator:
             if expected_count == 0 and starts.numel() == 0 and ends.numel() == 0:
                 continue
             if starts.numel() != 1 or ends.numel() != 1 or starts[0] >= ends[0]:
-                raise ValueError(
-                    "Each graph view must have one complete serialized block."
-                )
+                raise ValueError("Each graph view must have one complete serialized block.")
             columns = torch.nonzero(
                 (row == value_token_id)
                 & (torch.arange(row.numel()) > starts[0])
@@ -165,6 +161,7 @@ class HoCRSDataCollator:
 
         response = input_ids[prompt_length:]
         response = response[: self.max_response_tokens]
+        
         input_ids = input_ids[:prompt_length] + response
         if self.max_length is None or len(input_ids) <= self.max_length:
             return input_ids, prompt_length
@@ -172,18 +169,14 @@ class HoCRSDataCollator:
         try:
             protected_start = input_ids.index(protected_token_id)
         except ValueError as error:
-            raise ValueError(
-                "The protected prompt boundary token is missing."
-            ) from error
+            raise ValueError("The protected prompt boundary token is missing.") from error
 
-        prompt_prefix = input_ids[:protected_start]
+        prompt_prefix = input_ids[:protected_start]     #  超图提示前
         protected_prompt = input_ids[protected_start:prompt_length]
         response = input_ids[prompt_length:]
         response_budget = self.max_length - len(protected_prompt)
         if response_budget <= 0:
-            raise ValueError(
-                "The serialized graph prompt does not fit within max_length."
-            )
+            raise ValueError("The serialized graph prompt does not fit within max_length.")
 
         retained_response = response[:response_budget]
         prefix_budget = response_budget - len(retained_response)
@@ -286,10 +279,12 @@ class HoCRSDataCollator:
                 ),
                 token_ids["rec_token_id"],
             )
+            if self.processor.use_context_token:
+                protected_token_id = token_ids["context_token_id"]
             input_ids, prompt_length = self._truncate(
                 input_ids,
                 prompt_length,
-                protected_token_id,
+                protected_token_id,     # Hypergraph Start Token
             )
             retained_input_ids.append(input_ids)
             retained_prompt_lengths.append(prompt_length)

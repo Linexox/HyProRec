@@ -17,6 +17,7 @@ class ModelArguments:
     beta: float = 0.75
     num_soft_prompt_tokens: int = 10
     train_special_tokens: bool = False
+    use_context_token: bool = False
     hypergraph_hidden_dim: int = 1024
     hypergraph_output_dim: int = 256
     hypergraph_num_layers: int = 3

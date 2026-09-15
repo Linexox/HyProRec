@@ -102,6 +102,7 @@ def _build_model(
         moe_residual_scale_init=model_args.moe_residual_scale_init,
         beta=model_args.beta,
         num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
+        use_context_token=model_args.use_context_token,
         freeze_backbone=model_args.freeze_backbone,
         train_special_tokens=model_args.train_special_tokens,
         co_hypergraph_config=graph_configs.get("co"),
@@ -191,6 +192,7 @@ def main() -> None:
     processor = HoCRSProcessor(
         tokenizer=tokenizer,
         num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
+        use_context_token=model_args.use_context_token,
     )
     modality_tables = _load_modality_tables(data_args)
     content_table = _load_content_table(data_args)

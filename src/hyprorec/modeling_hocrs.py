@@ -320,6 +320,14 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             else None
         )
         self.recommendation_head = HoCRSRecommendationHead(lm_hidden_size, config)
+        self.context_residual_projector = (
+            nn.Linear(lm_hidden_size, lm_hidden_size, bias=False)
+            if config.use_context_token
+            else None
+        )
+        self.context_token_embedding = (
+            nn.Embedding(1, lm_hidden_size) if config.use_context_token else None
+        )
         self.recommendation_head.item_table.weight.requires_grad_(config.train_item_table)
         self.soft_prompt_embeddings = nn.Embedding(
             config.num_soft_prompt_tokens,
@@ -341,9 +349,18 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             )
         )
         self.post_init()
+        if self.context_residual_projector is not None:
+            nn.init.zeros_(self.context_residual_projector.weight)
         if self.moe is not None:
             self.moe.reset_output_layers()
         self._initialize_special_token_embeddings()
+        if self.context_token_embedding is not None:
+            if config.context_token_id is None:
+                raise ValueError("context_token_id is required when use_context_token is enabled.")
+            with torch.no_grad():
+                self.context_token_embedding.weight.copy_(
+                    self.get_input_embeddings().weight[config.context_token_id].unsqueeze(0)
+                )
         if config.freeze_backbone:
             self.backbone.requires_grad_(False)
 
@@ -471,6 +488,11 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         inputs_embeds: torch.Tensor,
     ) -> torch.Tensor:
         result = inputs_embeds.clone()
+
+        if self.context_token_embedding is not None:
+            result[input_ids == self.config.context_token_id] = (
+                self.context_token_embedding.weight[0].to(result.dtype)
+            )
 
         # Inject special token embeddings if they are trainable.
         if self.special_token_embeddings is not None:
@@ -650,6 +672,14 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         if not torch.all(rec_mask.sum(dim=1) == 1):
             raise ValueError("Every sample must contain exactly one recommendation token.")
         rec_hidden = backbone_output.hidden_states[-1][rec_mask]
+        if self.context_residual_projector is not None:
+            if self.config.context_token_id is None:
+                raise ValueError("context_token_id is required when use_context_token is enabled.")
+            context_mask = input_ids == self.config.context_token_id
+            if not torch.all(context_mask.sum(dim=1) == 1):
+                raise ValueError("Every sample must contain exactly one context token.")
+            context_hidden = backbone_output.hidden_states[-1][context_mask]
+            rec_hidden = rec_hidden + self.context_residual_projector(context_hidden)
         rec_scores = self.recommendation_head(rec_hidden)
         if rec_labels is not None:
             rec_loss = F.cross_entropy(rec_scores, rec_labels)

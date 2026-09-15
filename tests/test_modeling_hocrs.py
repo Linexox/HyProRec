@@ -17,10 +17,10 @@ from hyprorec.configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
 from hyprorec.data.hypergraph import HypergraphData
 from hyprorec.data.redial import HoCRSDataCollator
 from hyprorec.modeling_hocrs import HoCRSModel
-from hyprorec.processing_hocrs import HoCRSProcessor
+from hyprorec.processing_hocrs import CONTEXT_TOKEN, HoCRSProcessor
 
 
-def build_processor() -> HoCRSProcessor:
+def build_processor(use_context_token: bool = False) -> HoCRSProcessor:
     tokenizer = Tokenizer(
         WordLevel(
             {
@@ -41,7 +41,11 @@ def build_processor() -> HoCRSProcessor:
         unk_token="[UNK]",
         eos_token="[EOS]",
     )
-    return HoCRSProcessor(fast, num_soft_prompt_tokens=2)
+    return HoCRSProcessor(
+        fast,
+        num_soft_prompt_tokens=2,
+        use_context_token=use_context_token,
+    )
 
 
 def build_model(processor: HoCRSProcessor) -> HoCRSModel:
@@ -71,6 +75,7 @@ def build_model(processor: HoCRSProcessor) -> HoCRSModel:
         num_soft_prompt_tokens=2,
         freeze_backbone=True,
         train_special_tokens=True,
+        use_context_token=processor.use_context_token,
         **processor.get_token_id_map(),
     )
     model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
@@ -79,6 +84,44 @@ def build_model(processor: HoCRSProcessor) -> HoCRSModel:
 
 
 class HoCRSModelTest(unittest.TestCase):
+    def test_context_token_follows_history_in_all_prompts(self) -> None:
+        processor = build_processor(use_context_token=True)
+
+        graph_prompt = processor.build_prompt("hello", {"co": (1, 1)})
+        graphless_prompt = processor.build_prompt("hello", {})
+
+        for prompt in (graph_prompt, graphless_prompt):
+            self.assertEqual(prompt.count(CONTEXT_TOKEN), 1)
+            self.assertGreater(prompt.index(CONTEXT_TOKEN), prompt.index("hello"))
+        self.assertLess(graph_prompt.index(CONTEXT_TOKEN), graph_prompt.index("Hypergraphs:"))
+        self.assertLess(graphless_prompt.index(CONTEXT_TOKEN), graphless_prompt.index("Recommendation state:"))
+        with tempfile.TemporaryDirectory() as directory:
+            processor.save_pretrained(directory)
+            restored = HoCRSProcessor.from_pretrained(directory)
+        self.assertTrue(restored.use_context_token)
+
+    def test_context_residual_projector_starts_neutral_and_receives_gradients(self) -> None:
+        processor = build_processor(use_context_token=True)
+        model = build_model(processor)
+        batch = HoCRSDataCollator(processor)(
+            [{
+                "context": "hello",
+                "target_item_id": 1,
+                "response": "reply",
+                "hypergraphs": {"co": HypergraphData.from_hyperedges("co", [(0, [1])])},
+            }]
+        )
+        self.assertIsNotNone(model.context_residual_projector)
+        assert model.context_residual_projector is not None
+        self.assertTrue(torch.equal(
+            model.context_residual_projector.weight,
+            torch.zeros_like(model.context_residual_projector.weight),
+        ))
+
+        output = model(**batch)
+        output.loss.backward()
+        self.assertIsNotNone(model.context_residual_projector.weight.grad)
+
     # START: Verify shared content initialization does not tie trainable tables.
     def test_co_and_item_tables_copy_the_same_content_independently(self) -> None:
         processor = build_processor()

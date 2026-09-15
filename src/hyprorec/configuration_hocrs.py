@@ -95,9 +95,11 @@ class HoCRSConfig(PretrainedConfig):
         num_soft_prompt_tokens: int = 10,
         freeze_backbone: bool = True,
         train_special_tokens: bool = False,
+        use_context_token: bool = False,
         node_token_id: int | None = None,
         hyperedge_token_id: int | None = None,
         rec_token_id: int | None = None,
+        context_token_id: int | None = None,
         soft_prompt_token_id: int | None = None,
         graph_start_token_ids: dict[str, int] | None = None,
         graph_end_token_ids: dict[str, int] | None = None,
@@ -154,9 +156,11 @@ class HoCRSConfig(PretrainedConfig):
         self.num_soft_prompt_tokens = num_soft_prompt_tokens
         self.freeze_backbone = freeze_backbone
         self.train_special_tokens = train_special_tokens
+        self.use_context_token = use_context_token
         self.node_token_id = node_token_id
         self.hyperedge_token_id = hyperedge_token_id
         self.rec_token_id = rec_token_id
+        self.context_token_id = context_token_id
         self.soft_prompt_token_id = soft_prompt_token_id
         self.graph_start_token_ids = graph_start_token_ids or {}
         self.graph_end_token_ids = graph_end_token_ids or {}

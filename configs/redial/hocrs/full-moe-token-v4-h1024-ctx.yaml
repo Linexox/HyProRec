@@ -16,6 +16,7 @@ model:
   moe_hidden_dim: 512
   moe_router_temperature: 1.0
   moe_residual_scale_init: 1.0
+  use_context_token: true
 data:
   dataset_path: data/hocrs2_redial
   hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
@@ -28,7 +29,7 @@ data:
   max_history_tokens: 1024
   max_response_tokens: 64
 training:
-  output_dir: outputs/redial/hocrs/full-moe-token-v4-h1024
+  output_dir: outputs/redial/hocrs/full-moe-token-v4-h1024-ctx
   do_train: true
   do_eval: true
   do_predict: true
@@ -49,6 +50,6 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   report_to: wandb
-  run_name: full-moe-token-v4-h1024
+  run_name: full-moe-token-v4-h1024-ctx
   seed: 42
   data_seed: 42
