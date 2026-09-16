@@ -18,7 +18,6 @@ VIEWS = ("txt", "img", "ado", "vdo")
 
 
 def convert_checkpoint(source: Path, output: Path) -> None:
-    # START: Convert only known Grounding modules and preserve full provenance.
     source = source.resolve()
     payload = torch.load(source, map_location="cpu", weights_only=True)
     state = payload.get("adapter_state_dict", payload)
@@ -82,7 +81,6 @@ def convert_checkpoint(source: Path, output: Path) -> None:
         encoding="utf-8",
     )
     print(json.dumps({"output": str(output), "tensor_count": len(converted)}, indent=2))
-    # END: Convert only known Grounding modules and preserve full provenance.
 
 
 def main() -> None:

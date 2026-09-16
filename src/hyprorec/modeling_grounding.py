@@ -67,7 +67,7 @@ class HoCRSGroundingOutput(ModelOutput):
 class HoCRSGroundingModel(PreTrainedModel):
     config_class = HoCRSGroundingConfig
     base_model_prefix = "hypergraph_encoders"
-    accepts_loss_kwargs = False  # Modified: Trainer must normalize micro-batch means.
+    accepts_loss_kwargs = False
 
     def save_pretrained(self, save_directory, **kwargs):
         kwargs.setdefault("save_original_format", False)
@@ -114,7 +114,7 @@ class HoCRSGroundingModel(PreTrainedModel):
         view: str,
         node_features: torch.Tensor,
         graph: Mapping[str, torch.Tensor],
-        source_data: Mapping[str, torch.Tensor],  # Modified: raw modality batch.
+        source_data: Mapping[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
         num_hyperedges = int(graph["edge_ptr"][-1].item())
         encoded = self.hypergraph_encoders[view](
@@ -172,7 +172,7 @@ class HoCRSGroundingModel(PreTrainedModel):
         hypergraphs: Mapping[str, Mapping[str, torch.Tensor]],
         source_data: Mapping[
             str, Mapping[str, torch.Tensor]
-        ],  # Modified: independent raw source branch.
+        ],
         return_loss: bool = True,
         labels: torch.Tensor | None = None,
     ) -> HoCRSGroundingOutput:
@@ -180,7 +180,7 @@ class HoCRSGroundingModel(PreTrainedModel):
         for view in self.config.views:
             values = self._view_loss(
                 view, node_features[view], hypergraphs[view], source_data[view]
-            )  # Modified: preserve node ordering across branches.
+            )
             for name, value in values.items():
                 losses[name].append(value)
         zero = next(iter(node_features.values())).sum() * 0.0

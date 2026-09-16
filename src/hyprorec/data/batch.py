@@ -73,9 +73,7 @@ def batch_hypergraphs(graphs: Sequence[HypergraphData]) -> HypergraphBatch:
 
     node_ids = []
     incidence_indices = []
-    # START: Offset local anchor indices together with packed node indices.
     anchor_indices = []
-    # END: Offset local anchor indices together with packed node indices.
     node_ptr = [0]
     edge_ptr = [0]
     for graph in graphs:

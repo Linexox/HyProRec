@@ -28,7 +28,6 @@ from transformers import GPT2LMHeadModel
 from safetensors.torch import load_file
 
 
-# START: Verify original source architectures, raw input ordering, and Trainer contracts.
 class HoCRSFidelityTest(unittest.TestCase):
     def test_id_item_width_is_independent_of_modality_width(self):
         processor = build_processor()
@@ -260,7 +259,7 @@ class HoCRSFidelityTest(unittest.TestCase):
             )
             torch.testing.assert_close(batch["node_features"]["ado"], features[[1, 0]])
             self.assertNotIn("labels", batch)
-            source._blocks.clear()  # Modified: release mmap handles before Windows fixture cleanup.
+            source._blocks.clear()
 
     def test_grounding_raw_forward_backward_eval_and_roundtrip(self):
         set_seed(42)
@@ -405,7 +404,6 @@ class HoCRSFidelityTest(unittest.TestCase):
             )
 
 
-# END: Verify original source architectures, raw input ordering, and Trainer contracts.
 
 
 if __name__ == "__main__":

@@ -30,8 +30,8 @@ class ModelArguments:
     grounding_temperature: float = 0.07
     item_table_mode: str = "id"
     semantic_item_dim: int = 256
-    recommendation_hidden_dim: int = 2048  # Modified: match HoCRS2 recommendation space.
-    grounding_tokenizer_name_or_path: str = "sentence-transformers/all-mpnet-base-v2"  # Modified: raw-text Grounding tokenizer.
+    recommendation_hidden_dim: int = 2048
+    grounding_tokenizer_name_or_path: str = "sentence-transformers/all-mpnet-base-v2"
     recommendation_dropout: float = 0.0
     recommendation_temperature: float = 0.07
     use_moe: bool = False

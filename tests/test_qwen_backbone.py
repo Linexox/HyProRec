@@ -1,4 +1,3 @@
-# START: Exercise the actual small Thinker architecture without downloading weights.
 import tempfile
 import unittest
 from unittest import mock
@@ -54,4 +53,3 @@ class QwenBackboneTest(unittest.TestCase):
             config.return_value.model_type = "qwen2_5_omni"
             self.assertIs(load_backbone("local-omni"), load.return_value)
             load.assert_called_once_with("local-omni", dtype="auto")
-# END: Exercise the actual small Thinker architecture without downloading weights.

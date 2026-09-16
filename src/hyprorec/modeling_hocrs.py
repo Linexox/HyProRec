@@ -9,7 +9,7 @@ from typing import Any, Mapping
 import torch
 from torch import nn
 import torch.nn.functional as F
-from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel  # Modified: inspect backbone type before loading.
+from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
 from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import ModelOutput
 
@@ -344,11 +344,11 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
     config_class = HoCRSConfig
     base_model_prefix = "backbone"
     supports_gradient_checkpointing = True
-    accepts_loss_kwargs = False  # Modified: losses are micro-batch means, normalized by Trainer.
+    accepts_loss_kwargs = False
 
     def __init__(self, config: HoCRSConfig, backbone: nn.Module | None = None) -> None:
         super().__init__(config)
-        self.backbone = backbone or _backbone_from_config(config.backbone_config)  # Modified: reconstruct Thinker checkpoints.
+        self.backbone = backbone or _backbone_from_config(config.backbone_config)
         lm_hidden_size = _hidden_size(config.backbone_config)
 
         self.hypergraph_encoders = nn.ModuleDict()
@@ -449,8 +449,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
     ) -> None:
         missing = set(self.config.views) - set(feature_tables)
         assert not missing, f"Missing feature tables: {sorted(missing)}"
-        # if missing:
-            # raise ValueError(f"Missing feature tables: {sorted(missing)}")
         with torch.no_grad():
 
             # Initialize modality-based hypergraph node init features
@@ -476,8 +474,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 if name.startswith(prefix)
             }
             assert view_state, f"Grounding checkpoint has no '{view}' encoder."
-            # if not view_state:
-            #     raise ValueError(f"Grounding checkpoint has no '{view}' encoder.")
             encoder.load_state_dict(view_state)
             encoder.requires_grad_(False)
             projector_prefix = f"hypergraph_projectors.{view}."
@@ -513,8 +509,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
 
     def train(self, mode: bool = True) -> HoCRSModel:
         super().train(mode)
-        # if self.config.freeze_backbone:
-        #     self.backbone.eval()
         self.backbone.eval()
         return self
 
@@ -545,8 +539,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         # Inject soft prompt embeddings if they are trainable.
         if self.config.num_soft_prompt_tokens > 0:
             assert self.soft_prompt_embeddings is not None
-            # if self.config.soft_prompt_token_id is None:
-            #     raise ValueError("soft_prompt_token_id is missing from HoCRSConfig.")
 
             positions = torch.nonzero(input_ids == self.config.soft_prompt_token_id, as_tuple=False)
             expected = input_ids.size(0) * self.config.num_soft_prompt_tokens

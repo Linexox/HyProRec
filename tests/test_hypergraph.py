@@ -19,7 +19,6 @@ class HypergraphTest(unittest.TestCase):
 
         self.assertEqual(set(table.tables), {"txt"})
 
-    # START: Verify the 120-node budget and whole-edge early termination.
     def test_node_limit_accepts_overlap_and_stops_at_first_overflow(self) -> None:
         rows = [[i] for i in range(130)]
         for anchor_id in range(8):
@@ -44,9 +43,7 @@ class HypergraphTest(unittest.TestCase):
         self.assertEqual(graph.num_hyperedges, 7)
         self.assertNotIn(0, graph.node_ids.tolist())
 
-    # END: Verify the 120-node budget and whole-edge early termination.
 
-    # START: Verify that recent unique history items become BFS roots.
     def test_local_retrieval_uses_recent_unique_anchors(self) -> None:
         table = HypergraphTable(
             {"txt": [[item_id, 0] for item_id in range(12)]}
@@ -55,7 +52,6 @@ class HypergraphTest(unittest.TestCase):
 
         self.assertEqual(graph.node_ids.tolist(), list(range(9, -1, -1)))
 
-    # END: Verify that recent unique history items become BFS roots.
 
     def test_local_retrieval_and_disjoint_batch(self) -> None:
         table = HypergraphTable(
@@ -75,7 +71,6 @@ class HypergraphTest(unittest.TestCase):
         self.assertEqual(batch.batch_size, 2)
         self.assertEqual(batch["node_ptr"].tolist(), [0, 2, 4])
         self.assertEqual(batch["edge_ptr"].tolist(), [0, 2, 3])
-        # Modified: anchors remain aligned after disjoint graph packing.
         self.assertEqual(batch["hyperedge_anchor_index"].tolist(), [0, 1, 2])
         self.assertGreaterEqual(int(batch["hyperedge_index"][1, -1]), 2)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, Trainer, TrainerCallback, set_seed  # Modified: seed before constructing modules.
+from transformers import AutoTokenizer, Trainer, TrainerCallback, set_seed
 from transformers.trainer_utils import get_last_checkpoint
 
 from ..arguments import DataArguments, ModelArguments
@@ -19,7 +19,7 @@ from ..constants import MODALITIES
 from ..data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
 from ..data.hypergraph import HypergraphTable
 from ..metrics import build_compute_metrics, preprocess_logits_for_metrics
-from ..modeling_hocrs import HoCRSModel, load_backbone  # Modified: support Omni Thinker.
+from ..modeling_hocrs import HoCRSModel, load_backbone
 from ..processing_hocrs import HoCRSProcessor
 
 
@@ -67,7 +67,7 @@ def _build_model(
     modality_tables: dict[str, torch.Tensor],
     item_frequencies: torch.Tensor,
 ) -> HoCRSModel:
-    backbone = load_backbone(model_args.backbone_name_or_path)  # Modified: select Thinker for Omni.
+    backbone = load_backbone(model_args.backbone_name_or_path)
     backbone.resize_token_embeddings(len(processor.tokenizer))
 
     token_ids = processor.get_token_id_map()
@@ -189,7 +189,7 @@ def _save_experiment_provenance(
 def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
-    set_seed(training_args.seed)  # Modified: cover all newly initialized parameters.
+    set_seed(training_args.seed)
 
     tokenizer = AutoTokenizer.from_pretrained(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(

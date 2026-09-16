@@ -15,7 +15,6 @@ from ..constants import MODALITIES
 from .prepare_hyperedge_table import prepare_hyperedge_table
 
 
-# START: Keep transferred features and regenerated topology in one auditable snapshot.
 def prepare_dataset(source: Path, output: Path) -> None:
     source = source.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -54,7 +53,6 @@ def prepare_dataset(source: Path, output: Path) -> None:
     }
     (output / "provenance.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(json.dumps({"output": str(output), "num_items": num_items, "shapes": shapes}, indent=2))
-# END: Keep transferred features and regenerated topology in one auditable snapshot.
 
 
 if __name__ == "__main__":
