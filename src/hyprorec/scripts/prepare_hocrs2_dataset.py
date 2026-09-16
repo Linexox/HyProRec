@@ -50,8 +50,7 @@ def prepare_dataset(source: Path, output: Path) -> None:
         "files": provenance, "topology_generator": "hyprorec.scripts.prepare_hyperedge_table",
         "topology_sha256": hashlib.sha256((output / "hyperedge_table.json").read_bytes()).hexdigest(),
         "topology_topk": 50, "semantic_edges": "cosine nearest neighbours per modality",
-        "cooccurrence_edges": "train dialogues only; separate co view",
-        "crs_view": "vdo", "item_table": "random trainable; feature values are not used for its initialization",
+        "item_representation": "multimodal semantic features with warm-item ID residual",
     }
     (output / "provenance.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(json.dumps({"output": str(output), "num_items": num_items, "shapes": shapes}, indent=2))

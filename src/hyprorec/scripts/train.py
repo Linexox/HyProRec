@@ -40,15 +40,24 @@ def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
     return tables
 
 
-def _load_content_table(data_args: DataArguments) -> torch.Tensor:
-    table = torch.load(
-        data_args.content_table_path,
-        map_location="cpu",
-        weights_only=True,
-    ).float()
-    if table.ndim != 2:
-        raise ValueError("The content initialization table must be two-dimensional.")
-    return table
+def _load_item_target_frequencies(
+    data_args: DataArguments,
+    num_items: int,
+) -> torch.Tensor:
+    frequencies = torch.zeros(num_items, dtype=torch.float32)
+    path = Path(data_args.dataset_path) / "train_data.json"
+    with path.open(encoding="utf-8") as file:
+        conversations = json.load(file)
+    for conversation in conversations:
+        for turn in conversation["dialog"]:
+            if turn["role"] != "Recommender":
+                continue
+            for item_id in turn.get("items", []):
+                item_id = int(item_id)
+                if not 0 <= item_id < num_items:
+                    raise ValueError(f"Train target item {item_id} is outside the catalogue.")
+                frequencies[item_id] += 1
+    return frequencies
 
 
 def _build_model(
@@ -56,18 +65,19 @@ def _build_model(
     data_args: DataArguments,
     processor: HoCRSProcessor,
     modality_tables: dict[str, torch.Tensor],
-    content_table: torch.Tensor,
+    item_frequencies: torch.Tensor,
 ) -> HoCRSModel:
     backbone = load_backbone(model_args.backbone_name_or_path)  # Modified: select Thinker for Omni.
     backbone.resize_token_embeddings(len(processor.tokenizer))
 
     token_ids = processor.get_token_id_map()
-    num_items, item_dim = content_table.shape
+    if not modality_tables:
+        raise ValueError("At least one modality table is required.")
+    num_items = next(iter(modality_tables.values())).size(0)
     if any(table.size(0) != num_items for table in modality_tables.values()):
-        raise ValueError("Content and modality tables contain different item counts.")
+        raise ValueError("Modality tables contain different item counts.")
     view_input_dims = {
         **{view: table.size(1) for view, table in modality_tables.items()},
-        **({"co": item_dim} if "co" in data_args.views else {}),
     }
     graph_configs = {
         view: HoCRSHypergraphConfig(
@@ -83,15 +93,14 @@ def _build_model(
         backbone_config=backbone.config,
         views=data_args.views,
         num_items=num_items,
-        item_dim=(                                                          # ***** FIXME *****
-            model_args.recommendation_hidden_dim
-            if model_args.item_table_init == "random"
-            else item_dim
+        item_dim=(
+            model_args.semantic_item_dim
+            if model_args.item_table_mode == "semantic_hybrid"
+            else model_args.recommendation_hidden_dim
         ),
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
-        item_table_init=model_args.item_table_init,
-        train_item_table=model_args.train_item_table,
+        item_table_mode=model_args.item_table_mode,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_dropout=model_args.recommendation_dropout,
         recommendation_temperature=model_args.recommendation_temperature,
@@ -105,7 +114,6 @@ def _build_model(
         use_context_token=model_args.use_context_token,
         freeze_backbone=model_args.freeze_backbone,
         train_special_tokens=model_args.train_special_tokens,
-        co_hypergraph_config=graph_configs.get("co"),
         txt_hypergraph_config=graph_configs.get("txt"),
         img_hypergraph_config=graph_configs.get("img"),
         ado_hypergraph_config=graph_configs.get("ado"),
@@ -115,14 +123,9 @@ def _build_model(
     model = HoCRSModel(config, backbone=backbone)
     if model_args.grounding_checkpoint_path:
         model.load_grounding_checkpoint(model_args.grounding_checkpoint_path)
-    feature_tables = dict(modality_tables)
-    if "co" in data_args.views:
-        feature_tables["co"] = content_table
     model.initialize_feature_tables(
-        feature_tables,
-        item_table_init=(
-            content_table if model_args.item_table_init == "aligned_content" else None
-        ),
+        modality_tables,
+        item_frequencies=item_frequencies,
     )
     return model
 
@@ -195,13 +198,18 @@ def main() -> None:
         use_context_token=model_args.use_context_token,
     )
     modality_tables = _load_modality_tables(data_args)
-    content_table = _load_content_table(data_args)
+    if not modality_tables:
+        raise ValueError("CRS training requires at least one modality view.")
+    item_frequencies = _load_item_target_frequencies(
+        data_args,
+        next(iter(modality_tables.values())).size(0),
+    )
     model = _build_model(
         model_args,
         data_args,
         processor,
         modality_tables,
-        content_table,
+        item_frequencies,
     )
 
     dataset_config = HoCRSDatasetConfig(

@@ -16,3 +16,6 @@ wheels/
 /data/
 /outputs/
 /wandb/
+
+.codex-tmp/
+tmp/

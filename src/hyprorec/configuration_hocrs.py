@@ -72,7 +72,6 @@ class HoCRSConfig(PretrainedConfig):
         self,
         backbone_config: PretrainedConfig | dict[str, Any] | None = None,
         views: list[str] | tuple[str, ...] = GRAPH_VIEWS,
-        co_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         txt_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         img_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         ado_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
@@ -81,8 +80,7 @@ class HoCRSConfig(PretrainedConfig):
         item_dim: int = 2048,
         use_hypergraph_encoder: bool = True,
         grounding_checkpoint_path: str | None = None,
-        item_table_init: str = "random",
-        train_item_table: bool = True,
+        item_table_mode: str = "id",
         recommendation_hidden_dim: int = 2048,
         recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
@@ -119,8 +117,12 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("beta must be in [0, 1].")
         if num_items <= 0:
             raise ValueError("num_items must be positive.")
-        if item_table_init not in {"aligned_content", "random"}:
-            raise ValueError("Unknown Item Table initialization strategy.")
+        if item_table_mode not in {"id", "semantic_hybrid"}:
+            raise ValueError("item_table_mode must be 'id' or 'semantic_hybrid'.")
+        if item_table_mode == "semantic_hybrid" and not set(views).intersection(
+            GRAPH_VIEWS
+        ):
+            raise ValueError("semantic_hybrid requires at least one modality view.")
         if moe_num_experts < 2:
             raise ValueError("moe_num_experts must be at least 2.")
         if moe_hidden_dim < 1:
@@ -129,11 +131,8 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("moe_router_temperature must be positive.")
         if moe_residual_scale_init < 0:
             raise ValueError("moe_residual_scale_init must be non-negative.")
-        if use_moe and "co" in views:
-            raise ValueError("The token MoE branch only supports txt/img/ado/vdo views.")
 
         self.views = views
-        self.co_hypergraph_config = _hypergraph_config(co_hypergraph_config)
         self.txt_hypergraph_config = _hypergraph_config(txt_hypergraph_config)
         self.img_hypergraph_config = _hypergraph_config(img_hypergraph_config)
         self.ado_hypergraph_config = _hypergraph_config(ado_hypergraph_config)
@@ -142,8 +141,7 @@ class HoCRSConfig(PretrainedConfig):
         self.item_dim = item_dim
         self.use_hypergraph_encoder = use_hypergraph_encoder
         self.grounding_checkpoint_path = grounding_checkpoint_path
-        self.item_table_init = item_table_init
-        self.train_item_table = train_item_table
+        self.item_table_mode = item_table_mode
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_dropout = recommendation_dropout
         self.recommendation_temperature = recommendation_temperature

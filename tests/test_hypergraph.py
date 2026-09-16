@@ -1,13 +1,9 @@
-import json
-import tempfile
 import unittest
-from pathlib import Path
 
 import torch
 
 from hyprorec.data.batch import BatchData, batch_hypergraphs
 from hyprorec.data.hypergraph import HypergraphData, HypergraphTable
-from hyprorec.scripts.prepare_hyperedge_table import compute_cooccurrence_neighbors
 
 
 class HypergraphTest(unittest.TestCase):
@@ -17,8 +13,8 @@ class HypergraphTest(unittest.TestCase):
         for anchor_id in range(8):
             start = 8 + anchor_id * 14
             rows[anchor_id] = [anchor_id, *range(start, start + 14)]
-        table = HypergraphTable({"co": rows})
-        graph = table.build_local(list(range(8)), "co", topk=14, khop=1)
+        table = HypergraphTable({"txt": rows})
+        graph = table.build_local(list(range(8)), "txt", topk=14, khop=1)
 
         self.assertEqual(graph.num_nodes, 120)
         self.assertEqual(graph.num_hyperedges, 8)
@@ -49,40 +45,18 @@ class HypergraphTest(unittest.TestCase):
 
     # END: Verify that recent unique history items become BFS roots.
 
-    def test_cooccurrence_uses_unique_items_per_training_dialogue(self) -> None:
-        conversations = [
-            {
-                "dialog": [
-                    {"items": [0, 1, 1]},
-                    {"items": [1, 2]},
-                ]
-            },
-            {"dialog": [{"items": [0, 1]}]},
-        ]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory)
-            (path / "train_data.json").write_text(
-                json.dumps(conversations), encoding="utf-8"
-            )
-            neighbors = compute_cooccurrence_neighbors(path, num_items=4)
-
-        self.assertEqual(neighbors[0], [1, 2])
-        self.assertEqual(neighbors[1], [0, 2])
-        self.assertEqual(neighbors[2], [0, 1])
-        self.assertEqual(neighbors[3], [])
-
     def test_local_retrieval_and_disjoint_batch(self) -> None:
         table = HypergraphTable(
             {
-                "co": [
+                "txt": [
                     [0, 1, 2],
                     [1, 0, 2],
                     [2, 0, 1],
                 ]
             }
         )
-        first = table.build_local([0], view="co", topk=1, khop=2)
-        second = table.build_local([2], view="co", topk=1, khop=1)
+        first = table.build_local([0], view="txt", topk=1, khop=2)
+        second = table.build_local([2], view="txt", topk=1, khop=1)
         batch = batch_hypergraphs([first, second])
 
         self.assertEqual(first.num_hyperedges, 2)

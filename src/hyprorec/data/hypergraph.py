@@ -82,7 +82,7 @@ class HypergraphData:
 
 
 class HypergraphTable:
-    """Anchor-centered neighbor tables for co-occurrence and semantic views."""
+    """Anchor-centered modality-similarity neighbor tables."""
 
     def __init__(self, tables: dict[str, list[list[int]]]) -> None:
         unknown_views = set(tables) - set(GRAPH_VIEWS)

@@ -119,7 +119,6 @@ def _average_hyperedges(
     hyperedge_index: torch.Tensor,
     num_hyperedges: int,
 ) -> HypergraphEncoderOutput:
-    """Build direct-projection hyperedge features by averaging incident nodes."""
 
     node_index, edge_index = hyperedge_index
     hyperedge_features = node_features.new_zeros(
@@ -252,7 +251,7 @@ class GraphTokenMoE(nn.Module):
 
 
 class HoCRSRecommendationHead(nn.Module):
-    """ Full-catalog cosine recommendation head with an independent item table. """
+    """Full-catalog cosine head with ID or multimodal semantic items."""
 
     def __init__(self, input_dim: int, config: HoCRSConfig) -> None:
         super().__init__()
@@ -262,12 +261,80 @@ class HoCRSRecommendationHead(nn.Module):
             nn.Dropout(config.recommendation_dropout),
             nn.Linear(config.recommendation_hidden_dim, config.item_dim),
         )
-        self.item_table = nn.Embedding(config.num_items, config.item_dim)
+        self.item_table_mode = config.item_table_mode
+        self.semantic_views = tuple(config.views)
+        if self.item_table_mode == "id":
+            self.item_table = nn.Embedding(config.num_items, config.item_dim)
+            self.semantic_projectors = nn.ModuleDict()
+            self.item_residual = None
+        else:
+            self.item_table = None
+            self.semantic_projectors = nn.ModuleDict(
+                {
+                    view: nn.Linear(
+                        config.get_hypergraph_config(view).input_dim,
+                        config.item_dim,
+                        bias=False,
+                    )
+                    for view in self.semantic_views
+                }
+            )
+            self.item_residual = nn.Embedding(config.num_items, config.item_dim)
+        self.register_buffer(
+            "item_frequency_gate",
+            torch.zeros(config.num_items),
+            persistent=True,
+        )
         self.temperature = config.recommendation_temperature
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def reset_semantic_residual(self) -> None:
+        if self.item_residual is not None:
+            nn.init.zeros_(self.item_residual.weight)
+
+    def set_item_frequencies(self, frequencies: torch.Tensor) -> None:
+        if frequencies.shape != self.item_frequency_gate.shape:
+            raise ValueError(
+                f"Item frequencies have shape {tuple(frequencies.shape)}, "
+                f"expected {tuple(self.item_frequency_gate.shape)}."
+            )
+        frequencies = frequencies.to(
+            device=self.item_frequency_gate.device,
+            dtype=self.item_frequency_gate.dtype,
+        )
+        maximum = frequencies.max()
+        if maximum > 0:
+            gate = torch.log1p(frequencies) / torch.log1p(maximum)
+        else:
+            gate = torch.zeros_like(frequencies)
+        self.item_frequency_gate.copy_(gate)
+
+    def item_embeddings(
+        self,
+        feature_tables: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        if self.item_table is not None:
+            return F.normalize(self.item_table.weight, dim=-1)
+
+        semantic = None
+        for view, projector in self.semantic_projectors.items():
+            table = feature_tables[view]
+            valid = table.abs().sum(dim=-1, keepdim=True) > 0
+            projected = F.normalize(projector(table), dim=-1) * valid
+            semantic = projected if semantic is None else semantic + projected
+        if semantic is None:
+            raise ValueError("semantic_hybrid requires modality feature tables.")
+        semantic = F.normalize(semantic, dim=-1)
+        assert self.item_residual is not None
+        residual = self.item_residual.weight * self.item_frequency_gate.unsqueeze(-1)
+        return F.normalize(semantic + residual, dim=-1)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        feature_tables: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
         users = F.normalize(self.user_projector(hidden_states), dim=-1)
-        items = F.normalize(self.item_table.weight, dim=-1)
+        items = self.item_embeddings(feature_tables)
         return users @ items.t() / self.temperature
 
 
@@ -297,15 +364,11 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             )
             self.hypergraph_projectors[view] = HypergraphProjector(projector_input_dim, lm_hidden_size)
 
-            if view == "co":
-                self.co_feature_table = nn.Parameter(torch.empty(config.num_items, graph_config.input_dim))
-                nn.init.normal_(self.co_feature_table, mean=0.0, std=0.02)
-            else:
-                self.register_buffer(
-                    f"{view}_feature_table",
-                    torch.zeros(config.num_items, graph_config.input_dim),
-                    persistent=True,
-                )
+            self.register_buffer(
+                f"{view}_feature_table",
+                torch.zeros(config.num_items, graph_config.input_dim),
+                persistent=True,
+            )
 
         self.moe = (
             GraphTokenMoE(
@@ -328,7 +391,6 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         self.context_token_embedding = (
             nn.Embedding(1, lm_hidden_size) if config.use_context_token else None
         )
-        self.recommendation_head.item_table.weight.requires_grad_(config.train_item_table)
         self.soft_prompt_embeddings = nn.Embedding(
             config.num_soft_prompt_tokens,
             lm_hidden_size,
@@ -349,6 +411,7 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             )
         )
         self.post_init()
+        self.recommendation_head.reset_semantic_residual()
         if self.context_residual_projector is not None:
             nn.init.zeros_(self.context_residual_projector.weight)
         if self.moe is not None:
@@ -382,17 +445,16 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
     def initialize_feature_tables(
         self,
         feature_tables: Mapping[str, torch.Tensor],
-        item_table_init: torch.Tensor | None = None,
+        item_frequencies: torch.Tensor | None = None,
     ) -> None:
-        semantic_views = set(self.config.views) - {"co"}
-        missing = semantic_views - set(feature_tables)
+        missing = set(self.config.views) - set(feature_tables)
         assert not missing, f"Missing feature tables: {sorted(missing)}"
         # if missing:
             # raise ValueError(f"Missing feature tables: {sorted(missing)}")
         with torch.no_grad():
 
             # Initialize modality-based hypergraph node init features
-            for view in semantic_views:
+            for view in self.config.views:
                 target = getattr(self, f"{view}_feature_table")
                 source = feature_tables[view].to(dtype=target.dtype, device=target.device)
                 if source.shape != target.shape:
@@ -401,28 +463,8 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                         f"expected {tuple(target.shape)}."
                     )
                 target.copy_(source)
-
-            # Initialize CO-view hypergraph node init features
-            # if feature_tables["co"] is no provided, initialize it randomly
-            if "co" in self.config.views and "co" in feature_tables:
-                target = self.co_feature_table
-                content = feature_tables["co"].to(dtype=target.dtype, device=target.device)
-                if content.shape != target.shape:
-                    raise ValueError(
-                        f"co feature table has shape {tuple(content.shape)}, "
-                        f"expected {tuple(target.shape)}."
-                    )
-                target.copy_(content)
-
-            # Initialize item_table
-            if item_table_init is not None:
-                content = item_table_init.to(
-                    dtype=self.recommendation_head.item_table.weight.dtype,
-                    device=self.recommendation_head.item_table.weight.device,
-                )
-                if content.shape != self.recommendation_head.item_table.weight.shape:
-                    raise ValueError("The Item Table content initialization has an incompatible shape.")
-                self.recommendation_head.item_table.weight.copy_(content)
+            if item_frequencies is not None:
+                self.recommendation_head.set_item_frequencies(item_frequencies)
 
     def load_grounding_checkpoint(self, path: str) -> None:
         checkpoint = self._load_pretrained_state_dict(path)
@@ -628,21 +670,10 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             "moe_router_entropy": zero,
             "moe_view_usage": zero.new_zeros((len(self.config.views), expert_count)),
         }
-        #     "moe_usage": None,
-        #     "moe_router_entropy": None,
-        #     "moe_view_usage": None,
-        # }
         if not is_cached_step:
             inputs_embeds = self._inject_special_embeddings(input_ids, inputs_embeds)
             if self.config.views:
-                # if hypergraphs is None:
-                #     raise ValueError("Active graph views require hypergraph inputs.")
                 inputs_embeds, moe_diagnostics = self._inject_hypergraphs(inputs_embeds, hypergraphs)
-                # injected_moe_diagnostics = {
-                #     name: grounding.pop(name) for name in moe_diagnostics
-                # }
-                # if self.moe is not None:
-                #     moe_diagnostics = injected_moe_diagnostics
         if self.config.backbone_config.model_type == "qwen2_5_omni_thinker":
             kwargs["input_ids"] = input_ids
 
@@ -664,28 +695,20 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
                 hidden_states=backbone_output.hidden_states,
                 attentions=getattr(backbone_output, "attentions", None),
             )
-        # if self.config.rec_token_id is None:
-        #     raise ValueError("rec_token_id is missing from HoCRSConfig.")
         assert self.config.rec_token_id is not None, "rec_token_id is missing from HoCRSConfig."
         rec_mask = input_ids == self.config.rec_token_id
-        # counts = rec_mask.sum(dim=1)
-        if not torch.all(rec_mask.sum(dim=1) == 1):
-            raise ValueError("Every sample must contain exactly one recommendation token.")
         rec_hidden = backbone_output.hidden_states[-1][rec_mask]
         if self.context_residual_projector is not None:
-            if self.config.context_token_id is None:
-                raise ValueError("context_token_id is required when use_context_token is enabled.")
             context_mask = input_ids == self.config.context_token_id
-            if not torch.all(context_mask.sum(dim=1) == 1):
-                raise ValueError("Every sample must contain exactly one context token.")
             context_hidden = backbone_output.hidden_states[-1][context_mask]
             rec_hidden = rec_hidden + self.context_residual_projector(context_hidden)
-        rec_scores = self.recommendation_head(rec_hidden)
-        if rec_labels is not None:
-            rec_loss = F.cross_entropy(rec_scores, rec_labels)
-        else:
-            rec_loss = None
+        semantic_tables = {
+            view: getattr(self, f"{view}_feature_table")
+            for view in self.recommendation_head.semantic_views
+        }
+        rec_scores = self.recommendation_head(rec_hidden, semantic_tables)
 
+        rec_loss = F.cross_entropy(rec_scores, rec_labels) if rec_labels is not None else None
         conv_loss = backbone_output.loss
         loss = None
         if rec_loss is not None and conv_loss is not None:

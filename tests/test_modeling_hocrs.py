@@ -67,8 +67,8 @@ def build_model(processor: HoCRSProcessor) -> HoCRSModel:
     )
     config = HoCRSConfig(
         backbone_config=backbone_config,
-        views=["co"],
-        co_hypergraph_config=graph_config,
+        views=["txt"],
+        txt_hypergraph_config=graph_config,
         num_items=3,
         item_dim=8,
         recommendation_hidden_dim=8,
@@ -79,7 +79,7 @@ def build_model(processor: HoCRSProcessor) -> HoCRSModel:
         **processor.get_token_id_map(),
     )
     model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
-    model.initialize_feature_tables({"co": torch.randn(3, 8)})
+    model.initialize_feature_tables({"txt": torch.randn(3, 8)})
     return model
 
 
@@ -87,7 +87,7 @@ class HoCRSModelTest(unittest.TestCase):
     def test_context_token_follows_history_in_all_prompts(self) -> None:
         processor = build_processor(use_context_token=True)
 
-        graph_prompt = processor.build_prompt("hello", {"co": (1, 1)})
+        graph_prompt = processor.build_prompt("hello", {"txt": (1, 1)})
         graphless_prompt = processor.build_prompt("hello", {})
 
         for prompt in (graph_prompt, graphless_prompt):
@@ -108,7 +108,7 @@ class HoCRSModelTest(unittest.TestCase):
                 "context": "hello",
                 "target_item_id": 1,
                 "response": "reply",
-                "hypergraphs": {"co": HypergraphData.from_hyperedges("co", [(0, [1])])},
+                "hypergraphs": {"txt": HypergraphData.from_hyperedges("txt", [(0, [1])])},
             }]
         )
         self.assertIsNotNone(model.context_residual_projector)
@@ -121,25 +121,6 @@ class HoCRSModelTest(unittest.TestCase):
         output = model(**batch)
         output.loss.backward()
         self.assertIsNotNone(model.context_residual_projector.weight.grad)
-
-    # START: Verify shared content initialization does not tie trainable tables.
-    def test_co_and_item_tables_copy_the_same_content_independently(self) -> None:
-        processor = build_processor()
-        model = build_model(processor)
-        content = torch.randn(3, 8)
-
-        model.initialize_feature_tables({"co": content}, item_table_init=content)
-
-        self.assertTrue(torch.equal(model.co_feature_table, content))
-        self.assertTrue(
-            torch.equal(model.recommendation_head.item_table.weight, content)
-        )
-        self.assertNotEqual(
-            model.co_feature_table.data_ptr(),
-            model.recommendation_head.item_table.weight.data_ptr(),
-        )
-
-    # END: Verify shared content initialization does not tie trainable tables.
 
     def test_soft_prompt_injection_supports_batches(self) -> None:
         processor = build_processor()
@@ -155,7 +136,7 @@ class HoCRSModelTest(unittest.TestCase):
         injected.sum().backward()
         self.assertIsNotNone(model.soft_prompt_embeddings.weight.grad)
 
-    def test_semantic_view_does_not_require_co_view(self) -> None:
+    def test_semantic_view_initializes_its_feature_table(self) -> None:
         processor = build_processor()
         backbone_config = GPT2Config(
             vocab_size=len(processor.tokenizer),
@@ -183,10 +164,9 @@ class HoCRSModelTest(unittest.TestCase):
             **processor.get_token_id_map(),
         )
         model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
-        model.initialize_feature_tables(
-            {"txt": torch.randn(3, 8)}, item_table_init=torch.randn(3, 8)
-        )
-        self.assertFalse(hasattr(model, "co_feature_table"))
+        features = torch.randn(3, 8)
+        model.initialize_feature_tables({"txt": features})
+        self.assertTrue(torch.equal(model.txt_feature_table, features))
 
     def test_no_hypergraph_forward_and_backward(self) -> None:
         processor = build_processor()
@@ -212,8 +192,7 @@ class HoCRSModelTest(unittest.TestCase):
             **processor.get_token_id_map(),
         )
         model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
-        content = torch.randn(3, 8)
-        model.initialize_feature_tables({}, item_table_init=content)
+        model.initialize_feature_tables({})
         graphless_batch = HoCRSDataCollator(processor)(
             [
                 {
@@ -228,9 +207,7 @@ class HoCRSModelTest(unittest.TestCase):
         output = model(**graphless_batch)
         self.assertEqual(model.config.views, ())
         self.assertEqual(output.rec_scores.shape, (1, 3))
-        self.assertTrue(
-            torch.equal(model.recommendation_head.item_table.weight, content)
-        )
+        self.assertEqual(model.recommendation_head.item_table.weight.shape, (3, 8))
         output.loss.backward()
         self.assertIsNotNone(model.recommendation_head.user_projector[0].weight.grad)
         no_graph_output = model(
@@ -242,10 +219,81 @@ class HoCRSModelTest(unittest.TestCase):
         )
         self.assertEqual(no_graph_output.rec_scores.shape, (1, 3))
 
+    def test_semantic_hybrid_uses_content_for_unseen_and_gates_id_residual(self) -> None:
+        processor = build_processor()
+        backbone_config = GPT2Config(
+            vocab_size=len(processor.tokenizer),
+            n_embd=16,
+            n_layer=1,
+            n_head=2,
+            n_positions=128,
+            eos_token_id=1,
+            pad_token_id=1,
+        )
+        graph_config = HoCRSHypergraphConfig(
+            input_dim=8, hidden_dim=8, output_dim=8, num_layers=1
+        )
+        config = HoCRSConfig(
+            backbone_config=backbone_config,
+            views=["txt", "img"],
+            txt_hypergraph_config=graph_config,
+            img_hypergraph_config=graph_config,
+            num_items=3,
+            item_dim=4,
+            item_table_mode="semantic_hybrid",
+            recommendation_hidden_dim=8,
+            num_soft_prompt_tokens=0,
+            **processor.get_token_id_map(),
+        )
+        model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
+        tables = {
+            "txt": torch.randn(3, 8),
+            "img": torch.randn(3, 8),
+        }
+        model.initialize_feature_tables(
+            tables,
+            item_frequencies=torch.tensor([0.0, 1.0, 9.0]),
+        )
+        head = model.recommendation_head
+        before = head.item_embeddings(tables).detach().clone()
+        with torch.no_grad():
+            head.item_residual.weight.fill_(10.0)
+        after = head.item_embeddings(tables)
+
+        self.assertEqual(float(head.item_frequency_gate[0]), 0.0)
+        self.assertEqual(float(head.item_frequency_gate[2]), 1.0)
+        torch.testing.assert_close(after[0], before[0])
+        self.assertFalse(torch.allclose(after[1], before[1]))
+
+        loss = -after[0, 0] - after[1, 0]
+        loss.backward()
+        self.assertTrue(torch.equal(
+            head.item_residual.weight.grad[0],
+            torch.zeros_like(head.item_residual.weight.grad[0]),
+        ))
+        self.assertGreater(float(head.item_residual.weight.grad[1].abs().sum()), 0.0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            model.save_pretrained(directory)
+            restored = HoCRSModel.from_pretrained(directory)
+        torch.testing.assert_close(
+            restored.recommendation_head.item_frequency_gate,
+            head.item_frequency_gate,
+        )
+        torch.testing.assert_close(
+            restored.recommendation_head.item_embeddings(
+                {
+                    view: getattr(restored, f"{view}_feature_table")
+                    for view in restored.config.views
+                }
+            ),
+            head.item_embeddings(tables),
+        )
+
     def test_collator_keeps_graph_order_and_original_rows_with_text_only_sample(self) -> None:
         processor = build_processor()
-        first = HypergraphData.from_hyperedges("co", [(0, [1])])
-        third = HypergraphData.from_hyperedges("co", [(2, [1])])
+        first = HypergraphData.from_hyperedges("txt", [(0, [1])])
+        third = HypergraphData.from_hyperedges("txt", [(2, [1])])
 
         batch = HoCRSDataCollator(processor)(
             [
@@ -253,7 +301,7 @@ class HoCRSModelTest(unittest.TestCase):
                     "context": "hello",
                     "target_item_id": 1,
                     "response": "reply",
-                    "hypergraphs": {"co": first},
+                    "hypergraphs": {"txt": first},
                 },
                 {
                     "context": "hello",
@@ -265,12 +313,12 @@ class HoCRSModelTest(unittest.TestCase):
                     "context": "hello",
                     "target_item_id": 1,
                     "response": "reply",
-                    "hypergraphs": {"co": third},
+                    "hypergraphs": {"txt": third},
                 },
             ]
         )
 
-        graph_batch = batch["hypergraphs"]["co"]
+        graph_batch = batch["hypergraphs"]["txt"]
         self.assertEqual(graph_batch["node_ids"].tolist(), [0, 1, 2, 1])
         self.assertEqual(graph_batch["node_positions"][:, 0].tolist(), [0, 0, 2, 2])
         self.assertEqual(graph_batch["hyperedge_positions"][:, 0].tolist(), [0, 2])
@@ -352,8 +400,8 @@ class HoCRSModelTest(unittest.TestCase):
         )
         config = HoCRSConfig(
             backbone_config=backbone_config,
-            views=["co"],
-            co_hypergraph_config=graph_config,
+            views=["txt"],
+            txt_hypergraph_config=graph_config,
             num_items=3,
             item_dim=8,
             use_hypergraph_encoder=False,
@@ -364,15 +412,15 @@ class HoCRSModelTest(unittest.TestCase):
             **processor.get_token_id_map(),
         )
         model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
-        model.initialize_feature_tables({"co": torch.randn(3, 8)})
-        graph = HypergraphData.from_hyperedges("co", [(0, [1])])
+        model.initialize_feature_tables({"txt": torch.randn(3, 8)})
+        graph = HypergraphData.from_hyperedges("txt", [(0, [1])])
         batch = HoCRSDataCollator(processor)(
             [
                 {
                     "context": "hello",
                     "target_item_id": 1,
                     "response": "reply",
-                    "hypergraphs": {"co": graph},
+                    "hypergraphs": {"txt": graph},
                 }
             ]
         )
@@ -382,60 +430,60 @@ class HoCRSModelTest(unittest.TestCase):
         self.assertFalse(model.config.use_hypergraph_encoder)
         self.assertEqual(len(model.hypergraph_encoders), 0)
         self.assertEqual(
-            model.hypergraph_projectors["co"].node_projector.in_features,
+            model.hypergraph_projectors["txt"].node_projector.in_features,
             graph_config.input_dim,
         )
         output.loss.backward()
         self.assertIsNotNone(
-            model.hypergraph_projectors["co"].node_projector.weight.grad
+            model.hypergraph_projectors["txt"].node_projector.weight.grad
         )
 
     def test_left_truncation_preserves_graphs_and_response_labels(self) -> None:
         processor = build_processor()
-        graph = HypergraphData.from_hyperedges("co", [(0, [1])])
+        graph = HypergraphData.from_hyperedges("txt", [(0, [1])])
         batch = HoCRSDataCollator(processor, max_length=50)(
             [
                 {
                     "context": " ".join(["hello"] * 100),
                     "target_item_id": 1,
                     "response": "reply",
-                    "hypergraphs": {"co": graph},
+                    "hypergraphs": {"txt": graph},
                 }
             ]
         )
 
         self.assertEqual(batch["input_ids"].shape[1], 50)
         self.assertGreater(int((batch["labels"] != -100).sum()), 0)
-        self.assertEqual(batch["hypergraphs"]["co"]["node_positions"].shape[0], 2)
+        self.assertEqual(batch["hypergraphs"]["txt"]["node_positions"].shape[0], 2)
 
     def test_long_response_is_truncated_after_complete_graph_prompt(self) -> None:
         processor = build_processor()
-        graph = HypergraphData.from_hyperedges("co", [(0, [1])])
+        graph = HypergraphData.from_hyperedges("txt", [(0, [1])])
         batch = HoCRSDataCollator(processor, max_length=50)(
             [
                 {
                     "context": " ".join(["hello"] * 100),
                     "target_item_id": 1,
                     "response": " ".join(["reply"] * 100),
-                    "hypergraphs": {"co": graph},
+                    "hypergraphs": {"txt": graph},
                 }
             ]
         )
 
         self.assertEqual(batch["input_ids"].shape[1], 50)
         self.assertGreater(int((batch["labels"] != -100).sum()), 0)
-        self.assertEqual(batch["hypergraphs"]["co"]["node_positions"].shape[0], 2)
+        self.assertEqual(batch["hypergraphs"]["txt"]["node_positions"].shape[0], 2)
 
     def test_collated_forward_backward_and_standard_reload(self) -> None:
         processor = build_processor()
-        graph = HypergraphData.from_hyperedges("co", [(0, [1])])
+        graph = HypergraphData.from_hyperedges("txt", [(0, [1])])
         batch = HoCRSDataCollator(processor)(
             [
                 {
                     "context": "hello",
                     "target_item_id": 1,
                     "response": "reply",
-                    "hypergraphs": {"co": graph},
+                    "hypergraphs": {"txt": graph},
                 }
             ]
         )
@@ -445,7 +493,7 @@ class HoCRSModelTest(unittest.TestCase):
         self.assertEqual(output.rec_scores.shape, (1, 3))
         self.assertIsNotNone(output.loss)
         output.loss.backward()
-        projector_grad = model.hypergraph_projectors["co"].node_projector.weight.grad
+        projector_grad = model.hypergraph_projectors["txt"].node_projector.weight.grad
         self.assertIsNotNone(projector_grad)
         self.assertGreater(float(projector_grad.abs().sum()), 0.0)
 
@@ -454,7 +502,7 @@ class HoCRSModelTest(unittest.TestCase):
             "attention_mask": batch["attention_mask"],
             "hypergraphs": batch["hypergraphs"],
         }
-        projector = model.hypergraph_projectors["co"]
+        projector = model.hypergraph_projectors["txt"]
         with mock.patch.object(projector, "forward", wraps=projector.forward) as call:
             generated = model.generate(
                 **generation_inputs,
@@ -474,7 +522,7 @@ class HoCRSModelTest(unittest.TestCase):
         self.assertEqual(reloaded_processor.num_soft_prompt_tokens, 2)
         self.assertIsInstance(auto_model, HoCRSModel)
         self.assertTrue(
-            torch.equal(model.co_feature_table, reloaded_model.co_feature_table)
+            torch.equal(model.txt_feature_table, reloaded_model.txt_feature_table)
         )
         self.assertTrue(
             torch.equal(
@@ -483,7 +531,7 @@ class HoCRSModelTest(unittest.TestCase):
             )
         )
         self.assertNotEqual(
-            reloaded_model.co_feature_table.data_ptr(),
+            reloaded_model.txt_feature_table.data_ptr(),
             reloaded_model.recommendation_head.item_table.weight.data_ptr(),
         )
 
@@ -507,8 +555,8 @@ class HoCRSModelTest(unittest.TestCase):
         )
         config = HoCRSConfig(
             backbone_config=backbone_config,
-            views=["co"],
-            co_hypergraph_config=graph_config,
+            views=["txt"],
+            txt_hypergraph_config=graph_config,
             num_items=3,
             item_dim=8,
             recommendation_hidden_dim=8,

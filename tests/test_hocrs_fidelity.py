@@ -30,7 +30,7 @@ from safetensors.torch import load_file
 
 # START: Verify original source architectures, raw input ordering, and Trainer contracts.
 class HoCRSFidelityTest(unittest.TestCase):
-    def test_random_item_width_is_independent_of_content_width(self):
+    def test_id_item_width_is_independent_of_modality_width(self):
         processor = build_processor()
         backbone = GPT2LMHeadModel(
             GPT2Config(
@@ -46,10 +46,10 @@ class HoCRSFidelityTest(unittest.TestCase):
         with mock.patch("hyprorec.scripts.train.load_backbone", return_value=backbone):
             model = _build_model(
                 ModelArguments(),
-                DataArguments(views=[]),
+                DataArguments(views=["txt"]),
                 processor,
-                {},
-                torch.randn(3, 256),
+                {"txt": torch.randn(3, 256)},
+                torch.zeros(3),
             )
         self.assertEqual(
             tuple(model.recommendation_head.user_projector[0].weight.shape),

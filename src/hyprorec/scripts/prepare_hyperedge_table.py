@@ -1,22 +1,15 @@
-"""Build separated co-occurrence and modality-similarity neighbor tables."""
+"""Build modality-similarity neighbor tables."""
 
 from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter, defaultdict
-from itertools import combinations
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 
 from ..constants import MODALITIES
-
-
-def _load_json(path: Path):
-    with path.open(encoding="utf-8") as file:
-        return json.load(file)
 
 
 def compute_similarity_neighbors(
@@ -44,35 +37,6 @@ def compute_similarity_neighbors(
     return neighbors
 
 
-def compute_cooccurrence_neighbors(
-    dataset_dir: Path,
-    num_items: int,
-) -> list[list[int]]:
-    """Match HoCRS2 granularity: unique items co-mentioned in one train dialogue."""
-
-    counts: dict[int, Counter[int]] = defaultdict(Counter)
-    for conversation in _load_json(dataset_dir / "train_data.json"):
-        item_ids = {
-            int(item_id)
-            for utterance in conversation["dialog"]
-            for item_id in utterance.get("items", [])
-        }
-        
-        for left, right in combinations(sorted(item_ids), 2):
-            counts[left][right] += 1
-            counts[right][left] += 1
-    return [
-        [
-            node_id
-            for node_id, _ in sorted(
-                counts[anchor_id].items(),
-                key=lambda item: (-item[1], item[0]),
-            )
-        ]
-        for anchor_id in range(num_items)
-    ]
-
-
 def prepare_hyperedge_table(
     dataset_dir: Path,
     output: Path,
@@ -95,13 +59,7 @@ def prepare_hyperedge_table(
     }
     num_items = embeddings[MODALITIES[0]].size(0)
 
-    cooccurrence = compute_cooccurrence_neighbors(dataset_dir, num_items)
-    table: dict[str, list[list[int]]] = {
-        "co": [
-            [anchor_id, *cooccurrence[anchor_id][:topk]]
-            for anchor_id in range(num_items)
-        ]
-    }
+    table: dict[str, list[list[int]]] = {}
     for modality in MODALITIES:
         neighbors = compute_similarity_neighbors(
             embeddings[modality],

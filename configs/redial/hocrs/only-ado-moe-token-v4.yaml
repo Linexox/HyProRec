@@ -8,8 +8,7 @@ model:
   hypergraph_num_layers: 3
   use_hypergraph_encoder: true
   grounding_checkpoint_path: outputs/redial/hocrs/grounding-wo-co-hyprorec
-  item_table_init: random
-  train_item_table: true
+  item_table_mode: id
   recommendation_hidden_dim: 2048
   use_moe: true
   moe_num_experts: 4
@@ -20,7 +19,6 @@ data:
   dataset_path: data/hocrs2_redial
   hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
   embeddings_dir_name: embeddings
-  content_table_path: data/hocrs2_redial/embeddings/ado_embeddings.pt
   views: [ado]
   topk: 3
   khop: 2
