@@ -311,11 +311,16 @@ class HoCRSRecommendationHead(nn.Module):
     def item_embeddings(
         self,
         feature_tables: Mapping[str, torch.Tensor],
+        semantic_table: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.item_table is not None:
             return F.normalize(self.item_table.weight, dim=-1)
 
-        semantic = self.semantic_embeddings(feature_tables)
+        semantic = (
+            semantic_table
+            if semantic_table is not None
+            else self.semantic_embeddings(feature_tables)
+        )
         assert self.item_residual is not None
         residual = self.item_residual.weight * self.item_frequency_gate.unsqueeze(-1)
         return F.normalize(semantic + residual, dim=-1)
@@ -350,9 +355,10 @@ class HoCRSRecommendationHead(nn.Module):
         self,
         hidden_states: torch.Tensor,
         feature_tables: Mapping[str, torch.Tensor],
+        semantic_table: torch.Tensor | None = None,
     ) -> torch.Tensor:
         users = F.normalize(self.user_projector(hidden_states), dim=-1)
-        items = self.item_embeddings(feature_tables)
+        items = self.item_embeddings(feature_tables, semantic_table)
         return users @ items.t() / self.temperature
 
 
@@ -574,18 +580,12 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         self,
         inputs_embeds: torch.Tensor,
         hypergraphs: Mapping[str, Mapping[str, torch.Tensor]] | None,
+        semantic_table: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         result = inputs_embeds.clone()
         hypergraphs = hypergraphs or {}
         moe_weights: list[torch.Tensor] = []
         moe_view_weights: dict[str, torch.Tensor] = {}
-        semantic_table = None
-        if self.config.use_semantic_hypergraph_nodes:
-            feature_tables = {
-                view: getattr(self, f"{view}_feature_table")
-                for view in self.recommendation_head.semantic_views
-            }
-            semantic_table = self.recommendation_head.semantic_embeddings(feature_tables)
         for view in self.config.views:
             if view not in hypergraphs:
                 continue
@@ -694,10 +694,23 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             "moe_router_entropy": zero,
             "moe_view_usage": zero.new_zeros((len(self.config.views), expert_count)),
         }
+        semantic_table = None
         if not is_cached_step:
             inputs_embeds = self._inject_special_embeddings(input_ids, inputs_embeds)
             if self.config.views:
-                inputs_embeds, moe_diagnostics = self._inject_hypergraphs(inputs_embeds, hypergraphs)
+                if self.config.use_semantic_hypergraph_nodes:
+                    feature_tables = {
+                        view: getattr(self, f"{view}_feature_table")
+                        for view in self.recommendation_head.semantic_views
+                    }
+                    semantic_table = self.recommendation_head.semantic_embeddings(
+                        feature_tables
+                    )
+                inputs_embeds, moe_diagnostics = self._inject_hypergraphs(
+                    inputs_embeds,
+                    hypergraphs,
+                    semantic_table,
+                )
         if self.config.backbone_config.model_type == "qwen2_5_omni_thinker":
             kwargs["input_ids"] = input_ids
 
@@ -730,7 +743,11 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             view: getattr(self, f"{view}_feature_table")
             for view in self.recommendation_head.semantic_views
         }
-        rec_scores = self.recommendation_head(rec_hidden, semantic_tables)
+        rec_scores = self.recommendation_head(
+            rec_hidden,
+            semantic_tables,
+            semantic_table,
+        )
 
         rec_loss = F.cross_entropy(rec_scores, rec_labels) if rec_labels is not None else None
         conv_loss = backbone_output.loss
