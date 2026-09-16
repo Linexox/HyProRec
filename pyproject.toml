@@ -50,7 +50,6 @@ hyprorec-train = "hyprorec.scripts.train:main"
 hyprorec-grounding = "hyprorec.scripts.grounding:main"
 hyprorec-prepare-hyperedges = "hyprorec.scripts.prepare_hyperedge_table:main"
 hyprorec-prepare-embeddings = "hyprorec.scripts.prepare_embeddings:main"
-# Modified: expose offline fixed-slot content table preparation.
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
