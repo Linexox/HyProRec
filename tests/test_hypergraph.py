@@ -1,4 +1,7 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 import torch
 
@@ -7,6 +10,15 @@ from hyprorec.data.hypergraph import HypergraphData, HypergraphTable
 
 
 class HypergraphTest(unittest.TestCase):
+    def test_json_loader_ignores_retired_co_view(self) -> None:
+        rows = [[0, 1], [1, 0]]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hyperedges.json"
+            path.write_text(json.dumps({"co": rows, "txt": rows}), encoding="utf-8")
+            table = HypergraphTable.from_json(path)
+
+        self.assertEqual(set(table.tables), {"txt"})
+
     # START: Verify the 120-node budget and whole-edge early termination.
     def test_node_limit_accepts_overlap_and_stops_at_first_overflow(self) -> None:
         rows = [[i] for i in range(130)]

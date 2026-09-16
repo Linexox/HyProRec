@@ -113,6 +113,8 @@ class HypergraphTable:
             payload = json.load(file)
         if not isinstance(payload, dict):
             raise TypeError("hyperedge_table.json must contain an object.")
+        # Existing dataset snapshots may still carry the retired co-occurrence view.
+        payload.pop("co", None)
         return cls(payload)
 
     def build_local(
