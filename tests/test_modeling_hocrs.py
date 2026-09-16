@@ -290,6 +290,59 @@ class HoCRSModelTest(unittest.TestCase):
             head.item_embeddings(tables),
         )
 
+    def test_semantic_hypergraph_nodes_reuse_candidate_semantics(self) -> None:
+        processor = build_processor()
+        backbone_config = GPT2Config(
+            vocab_size=len(processor.tokenizer),
+            n_embd=16,
+            n_layer=1,
+            n_head=2,
+            n_positions=128,
+            eos_token_id=1,
+            pad_token_id=1,
+        )
+        graph_config = HoCRSHypergraphConfig(
+            input_dim=8, hidden_dim=8, output_dim=8, num_layers=1
+        )
+        config = HoCRSConfig(
+            backbone_config=backbone_config,
+            views=["txt"],
+            txt_hypergraph_config=graph_config,
+            num_items=3,
+            item_dim=4,
+            item_table_mode="semantic_hybrid",
+            use_semantic_hypergraph_nodes=True,
+            recommendation_hidden_dim=8,
+            num_soft_prompt_tokens=0,
+            **processor.get_token_id_map(),
+        )
+        model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
+        tables = {"txt": torch.randn(3, 8)}
+        model.initialize_feature_tables(tables)
+        graph = HypergraphData.from_hyperedges("txt", [(0, [1])])
+        batch = HoCRSDataCollator(processor)(
+            [{
+                "context": "hello",
+                "target_item_id": 1,
+                "response": "reply",
+                "hypergraphs": {"txt": graph},
+            }]
+        )
+        captured = []
+        hook = model.hypergraph_encoders["txt"].register_forward_pre_hook(
+            lambda _module, args: captured.append(args[0].detach().clone())
+        )
+        model(**batch)
+        hook.remove()
+
+        semantic = model.recommendation_head.semantic_embeddings(tables)
+        expected = model.recommendation_head.semantic_node_features(
+            "txt",
+            batch["hypergraphs"]["txt"]["node_ids"],
+            semantic,
+        )
+        torch.testing.assert_close(captured[0], expected)
+
     def test_collator_keeps_graph_order_and_original_rows_with_text_only_sample(self) -> None:
         processor = build_processor()
         first = HypergraphData.from_hyperedges("txt", [(0, [1])])

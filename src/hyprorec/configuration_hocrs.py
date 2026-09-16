@@ -81,6 +81,7 @@ class HoCRSConfig(PretrainedConfig):
         use_hypergraph_encoder: bool = True,
         grounding_checkpoint_path: str | None = None,
         item_table_mode: str = "id",
+        use_semantic_hypergraph_nodes: bool = False,
         recommendation_hidden_dim: int = 2048,
         recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
@@ -123,6 +124,10 @@ class HoCRSConfig(PretrainedConfig):
             GRAPH_VIEWS
         ):
             raise ValueError("semantic_hybrid requires at least one modality view.")
+        if use_semantic_hypergraph_nodes and item_table_mode != "semantic_hybrid":
+            raise ValueError(
+                "use_semantic_hypergraph_nodes requires item_table_mode='semantic_hybrid'."
+            )
         if moe_num_experts < 2:
             raise ValueError("moe_num_experts must be at least 2.")
         if moe_hidden_dim < 1:
@@ -142,6 +147,7 @@ class HoCRSConfig(PretrainedConfig):
         self.use_hypergraph_encoder = use_hypergraph_encoder
         self.grounding_checkpoint_path = grounding_checkpoint_path
         self.item_table_mode = item_table_mode
+        self.use_semantic_hypergraph_nodes = use_semantic_hypergraph_nodes
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_dropout = recommendation_dropout
         self.recommendation_temperature = recommendation_temperature

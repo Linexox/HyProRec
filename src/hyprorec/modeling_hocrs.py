@@ -315,6 +315,17 @@ class HoCRSRecommendationHead(nn.Module):
         if self.item_table is not None:
             return F.normalize(self.item_table.weight, dim=-1)
 
+        semantic = self.semantic_embeddings(feature_tables)
+        assert self.item_residual is not None
+        residual = self.item_residual.weight * self.item_frequency_gate.unsqueeze(-1)
+        return F.normalize(semantic + residual, dim=-1)
+
+    def semantic_embeddings(
+        self,
+        feature_tables: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        if not self.semantic_projectors:
+            raise ValueError("Semantic embeddings require semantic_hybrid mode.")
         semantic = None
         for view, projector in self.semantic_projectors.items():
             table = feature_tables[view]
@@ -323,10 +334,17 @@ class HoCRSRecommendationHead(nn.Module):
             semantic = projected if semantic is None else semantic + projected
         if semantic is None:
             raise ValueError("semantic_hybrid requires modality feature tables.")
-        semantic = F.normalize(semantic, dim=-1)
-        assert self.item_residual is not None
-        residual = self.item_residual.weight * self.item_frequency_gate.unsqueeze(-1)
-        return F.normalize(semantic + residual, dim=-1)
+        return F.normalize(semantic, dim=-1)
+
+    def semantic_node_features(
+        self,
+        view: str,
+        node_ids: torch.Tensor,
+        semantic_table: torch.Tensor,
+    ) -> torch.Tensor:
+        projector = self.semantic_projectors[view]
+        shared_nodes = semantic_table.index_select(0, node_ids)
+        return F.linear(shared_nodes, projector.weight.transpose(0, 1))
 
     def forward(
         self,
@@ -561,6 +579,13 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
         hypergraphs = hypergraphs or {}
         moe_weights: list[torch.Tensor] = []
         moe_view_weights: dict[str, torch.Tensor] = {}
+        semantic_table = None
+        if self.config.use_semantic_hypergraph_nodes:
+            feature_tables = {
+                view: getattr(self, f"{view}_feature_table")
+                for view in self.recommendation_head.semantic_views
+            }
+            semantic_table = self.recommendation_head.semantic_embeddings(feature_tables)
         for view in self.config.views:
             if view not in hypergraphs:
                 continue
@@ -568,8 +593,15 @@ class HoCRSModel(PreTrainedModel, GenerationMixin):
             # Build node and hyperedge features for projection.
             graph = hypergraphs[view]
             node_ids = graph["node_ids"]
-            feature_table = getattr(self, f"{view}_feature_table")
-            source_features = feature_table.index_select(0, node_ids)
+            if semantic_table is None:
+                feature_table = getattr(self, f"{view}_feature_table")
+                source_features = feature_table.index_select(0, node_ids)
+            else:
+                source_features = self.recommendation_head.semantic_node_features(
+                    view,
+                    node_ids,
+                    semantic_table,
+                )
             node_features = source_features
             num_hyperedges = int(graph["edge_ptr"][-1].item())
             if self.config.use_hypergraph_encoder:

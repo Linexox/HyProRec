@@ -30,6 +30,7 @@ class ModelArguments:
     grounding_temperature: float = 0.07
     item_table_mode: str = "id"
     semantic_item_dim: int = 256
+    use_semantic_hypergraph_nodes: bool = False
     recommendation_hidden_dim: int = 2048
     grounding_tokenizer_name_or_path: str = "sentence-transformers/all-mpnet-base-v2"
     recommendation_dropout: float = 0.0
@@ -45,6 +46,13 @@ class ModelArguments:
             raise ValueError("item_table_mode must be 'id' or 'semantic_hybrid'.")
         if self.semantic_item_dim < 1:
             raise ValueError("semantic_item_dim must be positive.")
+        if (
+            self.use_semantic_hypergraph_nodes
+            and self.item_table_mode != "semantic_hybrid"
+        ):
+            raise ValueError(
+                "use_semantic_hypergraph_nodes requires item_table_mode='semantic_hybrid'."
+            )
         if self.grounding_temperature <= 0:
             raise ValueError("grounding_temperature must be positive.")
 

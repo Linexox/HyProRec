@@ -101,6 +101,7 @@ def _build_model(
         use_hypergraph_encoder=model_args.use_hypergraph_encoder,
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
         item_table_mode=model_args.item_table_mode,
+        use_semantic_hypergraph_nodes=model_args.use_semantic_hypergraph_nodes,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_dropout=model_args.recommendation_dropout,
         recommendation_temperature=model_args.recommendation_temperature,
