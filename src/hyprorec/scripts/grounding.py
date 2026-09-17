@@ -10,6 +10,7 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
+from safetensors.torch import load_file
 from transformers import AutoTokenizer, Trainer, set_seed
 
 from ..arguments import DataArguments, ModelArguments
@@ -52,6 +53,18 @@ def _load_feature_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
         ).float()
         for view in data_args.views
         if view in MODALITIES
+    }
+
+
+def _completed_view_selection(view_dir: Path) -> dict[str, float | str | None]:
+    """Read the best-validation metadata saved with a completed view, if present."""
+    state_path = view_dir / "trainer_state.json"
+    if not state_path.is_file():
+        return {"checkpoint": None, "eval_loss": None}
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    return {
+        "checkpoint": state.get("best_model_checkpoint"),
+        "eval_loss": state.get("best_metric"),
     }
 
 
@@ -126,6 +139,23 @@ def main() -> None:
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
         )
+        view_dir = Path(args.output_dir)
+        completed_model_path = view_dir / "model.safetensors"
+        if completed_model_path.is_file():
+            # A completed per-view export is already the best validation-loss
+            # model (saved after Trainer restores it).  Reuse it so an
+            # interrupted sequential run only trains unfinished modalities.
+            if trainer.is_world_process_zero():
+                combined_state.update(load_file(str(completed_model_path)))
+                selections[view] = _completed_view_selection(view_dir)
+            trainer.accelerator.wait_for_everyone()
+            is_main_process = trainer.is_world_process_zero()
+            trainer.accelerator.free_memory()
+            del trainer, model
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            continue
         result = trainer.train(
             resume_from_checkpoint=training_args.resume_from_checkpoint
         )

@@ -22,8 +22,10 @@ training:
   output_dir: outputs/redial/hocrs/grounding-wo-co-k5-h3
   do_train: true
   do_eval: true
-  per_device_train_batch_size: 8
-  per_device_eval_batch_size: 8
+  # Run with eight DDP ranks: 8 x 1 = the original global batch size of 8.
+  # Batch one avoids Wav2Vec2 activation OOM for 160k-sample audio waveforms.
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
   num_train_epochs: 5
   learning_rate: 0.0001
   weight_decay: 0.01
