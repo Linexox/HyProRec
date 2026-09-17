@@ -231,12 +231,7 @@ def main() -> None:
     trainer = Trainer(
         model=model,
         args=training_args,
-        data_collator=HoCRSDataCollator(
-            processor,
-            max_length=data_args.max_length,
-            max_history_tokens=data_args.max_history_tokens,
-            max_response_tokens=data_args.max_response_tokens,
-        ),
+        data_collator=HoCRSDataCollator(processor),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=processor,

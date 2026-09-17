@@ -390,41 +390,53 @@ class HoCRSModelTest(unittest.TestCase):
             model.hypergraph_projectors["co"].node_projector.weight.grad
         )
 
-    def test_left_truncation_preserves_graphs_and_response_labels(self) -> None:
-        processor = build_processor()
+    def test_long_history_response_and_graph_tokens_are_preserved(self) -> None:
+        processor = build_processor(use_context_token=True)
         graph = HypergraphData.from_hyperedges("co", [(0, [1])])
-        batch = HoCRSDataCollator(processor, max_length=50)(
+        batch = HoCRSDataCollator(processor)(
             [
                 {
-                    "context": " ".join(["hello"] * 100),
+                    "context": " ".join(["hello"] * 4200),
                     "target_item_id": 1,
-                    "response": "reply",
+                    "response": " ".join(["reply"] * 200),
                     "hypergraphs": {"co": graph},
-                }
+                },
+                {
+                    "context": "hello",
+                    "target_item_id": 2,
+                    "response": "reply",
+                    "hypergraphs": {},
+                },
             ]
         )
 
-        self.assertEqual(batch["input_ids"].shape[1], 50)
-        self.assertGreater(int((batch["labels"] != -100).sum()), 0)
+        self.assertGreater(batch["input_ids"].shape[1], 4400)
+        self.assertEqual(int((batch["input_ids"][0] == 5).sum()), 4200)
+        self.assertEqual(int((batch["labels"][0] == 6).sum()), 200)
+        self.assertEqual(int((batch["labels"][0] != -100).sum()), 201)
+        self.assertTrue((batch["labels"][batch["input_ids"] == 5] == -100).all())
+        self.assertTrue((batch["labels"][batch["attention_mask"] == 0] == -100).all())
+        self.assertEqual(int((batch["labels"][1] != -100).sum()), 2)
         self.assertEqual(batch["hypergraphs"]["co"]["node_positions"].shape[0], 2)
+        self.assertEqual(batch["hypergraphs"]["co"]["node_positions"][:, 0].tolist(), [0, 0])
 
-    def test_long_response_is_truncated_after_complete_graph_prompt(self) -> None:
+    def test_graphless_long_history_is_not_cropped(self) -> None:
         processor = build_processor()
-        graph = HypergraphData.from_hyperedges("co", [(0, [1])])
-        batch = HoCRSDataCollator(processor, max_length=50)(
+        batch = HoCRSDataCollator(processor)(
             [
                 {
-                    "context": " ".join(["hello"] * 100),
+                    "context": " ".join(["hello"] * 1200),
                     "target_item_id": 1,
                     "response": " ".join(["reply"] * 100),
-                    "hypergraphs": {"co": graph},
+                    "hypergraphs": {},
                 }
             ]
         )
 
-        self.assertEqual(batch["input_ids"].shape[1], 50)
-        self.assertGreater(int((batch["labels"] != -100).sum()), 0)
-        self.assertEqual(batch["hypergraphs"]["co"]["node_positions"].shape[0], 2)
+        self.assertGreater(batch["input_ids"].shape[1], 1300)
+        self.assertEqual(int((batch["input_ids"] == 5).sum()), 1200)
+        self.assertEqual(int((batch["labels"] != -100).sum()), 101)
+        self.assertEqual(batch["hypergraphs"], {})
 
     def test_collated_forward_backward_and_standard_reload(self) -> None:
         processor = build_processor()

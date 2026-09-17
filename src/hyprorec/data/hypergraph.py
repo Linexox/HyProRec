@@ -66,21 +66,6 @@ class HypergraphData:
     def num_hyperedges(self) -> int:
         return int(self.hyperedge_index[1].max().item()) + 1
 
-    def truncate_hyperedges(self, count: int) -> HypergraphData:
-        return self
-        # if not 1 <= count <= self.num_hyperedges:
-        #     raise ValueError("count must retain at least one hyperedge.")
-        # if count == self.num_hyperedges:
-        #     return self
-        # node_index, edge_index = self.hyperedge_index
-        # hyperedges = []
-        # for edge_id in range(count):
-        #     members = self.node_ids[node_index[edge_index == edge_id]].tolist()
-        #     anchor_id = int(self.node_ids[self.hyperedge_anchor_index[edge_id]])
-        #     hyperedges.append((anchor_id, [item for item in members if item != anchor_id]))
-        # return HypergraphData.from_hyperedges(self.view, hyperedges)
-
-
 class HypergraphTable:
     """Anchor-centered neighbor tables for co-occurrence and semantic views."""
 
@@ -132,12 +117,9 @@ class HypergraphTable:
         if not anchors:
             return HypergraphData.from_hyperedges(view, [])
         
-        # Modified: let the 120-node graph budget, rather than a small anchor cap, bound retrieval.
-        frontier = list(dict.fromkeys(reversed(anchors)))[:256]
+        frontier = list(dict.fromkeys(reversed(anchors)))
         visited: set[int] = set()
         hyperedges: list[tuple[int, list[int]]] = []
-        selected_nodes: set[int] = set()
-        max_nodes = 120                                                                       # ***** FIXME *****
 
         for _ in range(khop):
             next_frontier: list[int] = []
@@ -145,12 +127,6 @@ class HypergraphTable:
                 if anchor_id in visited: continue
                 row = self.tables[view][anchor_id]
                 neighbors = row[1 : topk + 1]
-                candidate_nodes = {anchor_id, *neighbors}
-                if len(selected_nodes | candidate_nodes) > max_nodes:
-                    if not hyperedges:
-                        raise ValueError("The first hyperedge exceeds the 120-node limit.")
-                    return HypergraphData.from_hyperedges(view, hyperedges)
-                selected_nodes.update(candidate_nodes)
                 hyperedges.append((anchor_id, neighbors))
                 visited.add(anchor_id)
                 next_frontier.extend(neighbors)

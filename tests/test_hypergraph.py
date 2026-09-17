@@ -11,8 +11,7 @@ from hyprorec.scripts.prepare_hyperedge_table import compute_cooccurrence_neighb
 
 
 class HypergraphTest(unittest.TestCase):
-    # START: Verify the 120-node budget and whole-edge early termination.
-    def test_node_limit_accepts_overlap_and_stops_at_first_overflow(self) -> None:
+    def test_local_retrieval_keeps_all_nodes_without_a_budget(self) -> None:
         rows = [[i] for i in range(130)]
         for anchor_id in range(8):
             start = 8 + anchor_id * 14
@@ -24,19 +23,26 @@ class HypergraphTest(unittest.TestCase):
         self.assertEqual(graph.num_hyperedges, 8)
         self.assertEqual(int((graph.hyperedge_index[1] == 7).sum()), 15)
 
-    def test_node_limit_does_not_partially_insert_an_edge(self) -> None:
-        rows = [[i] for i in range(130)]
+    def test_local_retrieval_keeps_edges_past_the_old_node_limit(self) -> None:
+        rows = [[i] for i in range(140)]
         for anchor_id in range(8):
-            start = 8 + anchor_id * 15
+            start = 8 + anchor_id * 16
             rows[anchor_id] = [anchor_id, *range(start, start + 15)]
         table = HypergraphTable({"txt": rows})
         graph = table.build_local(list(range(8)), "txt", topk=15, khop=1)
 
-        self.assertEqual(graph.num_nodes, 112)
-        self.assertEqual(graph.num_hyperedges, 7)
-        self.assertNotIn(0, graph.node_ids.tolist())
+        self.assertEqual(graph.num_nodes, 128)
+        self.assertEqual(graph.num_hyperedges, 8)
+        self.assertIn(0, graph.node_ids.tolist())
 
-    # END: Verify the 120-node budget and whole-edge early termination.
+    def test_local_retrieval_keeps_more_than_256_unique_anchors(self) -> None:
+        rows = [[i] for i in range(300)]
+        table = HypergraphTable({"txt": rows})
+        graph = table.build_local(list(range(300)), "txt", topk=0, khop=1)
+
+        self.assertEqual(graph.num_nodes, 300)
+        self.assertEqual(graph.num_hyperedges, 300)
+        self.assertEqual(graph.node_ids.tolist(), list(range(299, -1, -1)))
 
     # START: Verify that recent unique history items become BFS roots.
     def test_local_retrieval_uses_recent_unique_anchors(self) -> None:

@@ -108,17 +108,8 @@ class HoCRSDataset(Dataset):
 class HoCRSDataCollator:
     """Tokenize conversations and pack every graph view into tensor mappings."""
 
-    def __init__(
-        self,
-        processor: HoCRSProcessor,
-        max_length: int | None = 1024,
-        max_history_tokens: int = 150,
-        max_response_tokens: int = 64,
-    ) -> None:
+    def __init__(self, processor: HoCRSProcessor) -> None:
         self.processor = processor
-        self.max_length = max_length
-        self.max_history_tokens = max_history_tokens
-        self.max_response_tokens = max_response_tokens
 
     @staticmethod
     def _positions(
@@ -145,95 +136,22 @@ class HoCRSDataCollator:
             ).flatten()
             if columns.numel() != expected_count:
                 raise ValueError(
-                    "Graph placeholders were truncated or do not match the topology: "
+                    "Graph placeholders do not match the topology: "
                     f"expected {expected_count}, found {columns.numel()}."
                 )
             positions.extend((row_index, int(column)) for column in columns)
         return torch.tensor(positions, dtype=torch.long).reshape(-1, 2)
 
-    def _truncate(
-        self,
-        input_ids: list[int],
-        prompt_length: int,
-        protected_token_id: int,
-    ) -> tuple[list[int], int]:
-        """Keep graph prompts intact while trimming context, then response."""
-
-        response = input_ids[prompt_length:]
-        response = response[: self.max_response_tokens]
-        
-        input_ids = input_ids[:prompt_length] + response
-        if self.max_length is None or len(input_ids) <= self.max_length:
-            return input_ids, prompt_length
-
-        try:
-            protected_start = input_ids.index(protected_token_id)
-        except ValueError as error:
-            raise ValueError("The protected prompt boundary token is missing.") from error
-
-        prompt_prefix = input_ids[:protected_start]     #  超图提示前
-        protected_prompt = input_ids[protected_start:prompt_length]
-        response = input_ids[prompt_length:]
-        response_budget = self.max_length - len(protected_prompt)
-        if response_budget <= 0:
-            raise ValueError("The serialized graph prompt does not fit within max_length.")
-
-        retained_response = response[:response_budget]
-        prefix_budget = response_budget - len(retained_response)
-        retained_prefix = prompt_prefix[-prefix_budget:] if prefix_budget else []
-        retained_prompt_length = len(retained_prefix) + len(protected_prompt)
-        return (
-            retained_prefix + protected_prompt + retained_response,
-            retained_prompt_length,
-        )
-
-    def _fit_graphs(
-        self,
-        context: str,
-        graphs: dict[str, HypergraphData],
-    ) -> tuple[dict[str, HypergraphData], str]:
-        while True:
-            sizes = {
-                view: (graph.num_nodes, graph.num_hyperedges)
-                for view, graph in graphs.items()
-            }
-            prompt = self.processor.build_prompt(context, sizes)
-            graph_prompt_length = len(
-                self.processor.tokenizer(
-                    f"{self.processor.build_prompt('', sizes)}\n",
-                    add_special_tokens=False,
-                )["input_ids"]
-            )
-            if self.max_length is None or graph_prompt_length <= self.max_length:
-                return graphs, prompt
-
-            candidates = [view for view, graph in graphs.items() if graph.num_hyperedges > 1]
-            if not candidates:
-                return graphs, prompt
-            view = max(
-                candidates,
-                key=lambda name: graphs[name].num_nodes + graphs[name].num_hyperedges,
-            )
-            graph = graphs[view]
-            fitted_graph = graph.truncate_hyperedges(graph.num_hyperedges - 1)
-            if fitted_graph.num_hyperedges >= graph.num_hyperedges:
-                return graphs, prompt
-            graphs[view] = fitted_graph
-
     def _prepare_sample(
         self,
         feature: dict[str, Any],
     ) -> tuple[dict[str, HypergraphData], str]:
-        history_ids = self.processor.tokenizer(
-            feature["context"],
-            add_special_tokens=False,
-        )["input_ids"]
-        history_ids = history_ids[-self.max_history_tokens :]
-        context = self.processor.tokenizer.decode(
-            history_ids,
-            skip_special_tokens=False,
-        )
-        return self._fit_graphs(context, dict(feature["hypergraphs"]))
+        graphs = dict(feature["hypergraphs"])
+        sizes = {
+            view: (graph.num_nodes, graph.num_hyperedges)
+            for view, graph in graphs.items()
+        }
+        return graphs, self.processor.build_prompt(feature["context"], sizes)
 
     @staticmethod
     def _collect_views(
@@ -250,53 +168,37 @@ class HoCRSDataCollator:
         self,
         features: Sequence[dict[str, Any]],
         prompts: Sequence[str],
-        graph_sets: Sequence[dict[str, HypergraphData]],
-        views: Sequence[str],
-        token_ids: dict[str, Any],
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         eos_token = self.processor.tokenizer.eos_token or ""
-        retained_input_ids: list[list[int]] = []
-        retained_prompt_lengths: list[int] = []
+        batch_input_ids: list[list[int]] = []
+        prompt_lengths: list[int] = []
 
-        for feature, prompt, graphs in zip(features, prompts, graph_sets):
+        for feature, prompt in zip(features, prompts):
             prompt_text = f"{prompt}\n"
             text = f"{prompt_text}{feature['response']}{eos_token}"
             prompt_length = len(
                 self.processor.tokenizer(
                     prompt_text,
                     add_special_tokens=False,
+                    truncation=False,
                 )["input_ids"]
             )
             input_ids = self.processor.tokenizer(
                 text,
                 add_special_tokens=False,
+                truncation=False,
             )["input_ids"]
-            protected_token_id = next(
-                (
-                    token_ids["graph_start_token_ids"][view]
-                    for view in views
-                    if view in graphs
-                ),
-                token_ids["rec_token_id"],
-            )
-            if self.processor.use_context_token:
-                protected_token_id = token_ids["context_token_id"]
-            input_ids, prompt_length = self._truncate(
-                input_ids,
-                prompt_length,
-                protected_token_id,     # Hypergraph Start Token
-            )
-            retained_input_ids.append(input_ids)
-            retained_prompt_lengths.append(prompt_length)
+            batch_input_ids.append(input_ids)
+            prompt_lengths.append(prompt_length)
 
         encoded = self.processor.tokenizer.pad(
-            [{"input_ids": input_ids} for input_ids in retained_input_ids],
+            [{"input_ids": input_ids} for input_ids in batch_input_ids],
             padding=True,
             return_tensors="pt",
         )
         labels = encoded["input_ids"].clone()
         labels[encoded["attention_mask"] == 0] = -100
-        for row_index, prompt_length in enumerate(retained_prompt_lengths):
+        for row_index, prompt_length in enumerate(prompt_lengths):
             labels[row_index, :prompt_length] = -100
         return encoded, labels
 
@@ -341,13 +243,7 @@ class HoCRSDataCollator:
         prompts = [prompt for _, prompt in prepared]
         views = self._collect_views(graph_sets)
         token_ids = self.processor.get_token_id_map()
-        encoded, labels = self._encode_batch(
-            features,
-            prompts,
-            graph_sets,
-            views,
-            token_ids,
-        )
+        encoded, labels = self._encode_batch(features, prompts)
         hypergraphs = self._batch_graph_views(
             graph_sets,
             views,

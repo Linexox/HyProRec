@@ -56,9 +56,6 @@ class DataArguments:
     views: list[str] = field(default_factory=lambda: list(GRAPH_VIEWS))
     topk: int = 3
     khop: int = 2
-    max_length: int = 1024
-    max_history_tokens: int = 150
-    max_response_tokens: int = 64
 
     def __post_init__(self) -> None:
         self.views = list(dict.fromkeys(self.views))

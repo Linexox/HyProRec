@@ -25,9 +25,6 @@ data:
   views: [txt, img, ado, vdo]
   topk: 3
   khop: 2
-  max_length: 4096
-  max_history_tokens: 1024
-  max_response_tokens: 64
 training:
   output_dir: outputs/redial/hocrs/full-moe-token-v4-h1024-ctx
   do_train: true

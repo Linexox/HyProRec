@@ -24,9 +24,6 @@ data:
   views: [ado]
   topk: 3
   khop: 2
-  max_length: 4096
-  max_history_tokens: 256
-  max_response_tokens: 64
 training:
   output_dir: outputs/redial/hocrs/only-ado-moe-token-v4
   do_train: true
