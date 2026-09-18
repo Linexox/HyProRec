@@ -45,16 +45,15 @@ class GraphTokenMoETest(unittest.TestCase):
             views=["txt"],
             txt_hypergraph_config=graph_config,
             num_items=3,
-            item_dim=4,
+            item_feature_dim=4,
             recommendation_hidden_dim=4,
-            use_moe=True,
-            moe_num_experts=2,
             moe_hidden_dim=4,
         )
         model = HoCRSModel(config, GPT2LMHeadModel(backbone_config))
 
         self.assertIsNotNone(model.moe)
         self.assertEqual(model.moe.view_embeddings.shape, (1, 8))
+        self.assertEqual(len(model.moe.experts), 4)
 
 
 if __name__ == "__main__":

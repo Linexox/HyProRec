@@ -136,7 +136,9 @@ class HoCRSDataCollator:
             if expected_count == 0 and starts.numel() == 0 and ends.numel() == 0:
                 continue
             if starts.numel() != 1 or ends.numel() != 1 or starts[0] >= ends[0]:
-                raise ValueError("Each graph view must have one complete serialized block.")
+                raise ValueError(
+                    "Each graph view must have one complete serialized block."
+                )
             columns = torch.nonzero(
                 (row == value_token_id)
                 & (torch.arange(row.numel()) > starts[0])
@@ -161,7 +163,7 @@ class HoCRSDataCollator:
 
         response = input_ids[prompt_length:]
         response = response[: self.max_response_tokens]
-        
+
         input_ids = input_ids[:prompt_length] + response
         if self.max_length is None or len(input_ids) <= self.max_length:
             return input_ids, prompt_length
@@ -169,14 +171,18 @@ class HoCRSDataCollator:
         try:
             protected_start = input_ids.index(protected_token_id)
         except ValueError as error:
-            raise ValueError("The protected prompt boundary token is missing.") from error
+            raise ValueError(
+                "The protected prompt boundary token is missing."
+            ) from error
 
-        prompt_prefix = input_ids[:protected_start]     #  超图提示前
+        prompt_prefix = input_ids[:protected_start]  #  超图提示前
         protected_prompt = input_ids[protected_start:prompt_length]
         response = input_ids[prompt_length:]
         response_budget = self.max_length - len(protected_prompt)
         if response_budget <= 0:
-            raise ValueError("The serialized graph prompt does not fit within max_length.")
+            raise ValueError(
+                "The serialized graph prompt does not fit within max_length."
+            )
 
         retained_response = response[:response_budget]
         prefix_budget = response_budget - len(retained_response)
@@ -207,7 +213,9 @@ class HoCRSDataCollator:
             if self.max_length is None or graph_prompt_length <= self.max_length:
                 return graphs, prompt
 
-            candidates = [view for view, graph in graphs.items() if graph.num_hyperedges > 1]
+            candidates = [
+                view for view, graph in graphs.items() if graph.num_hyperedges > 1
+            ]
             if not candidates:
                 return graphs, prompt
             view = max(
@@ -279,12 +287,10 @@ class HoCRSDataCollator:
                 ),
                 token_ids["rec_token_id"],
             )
-            if self.processor.use_context_token:
-                protected_token_id = token_ids["context_token_id"]
             input_ids, prompt_length = self._truncate(
                 input_ids,
                 prompt_length,
-                protected_token_id,     # Hypergraph Start Token
+                protected_token_id,  # Hypergraph Start Token
             )
             retained_input_ids.append(input_ids)
             retained_prompt_lengths.append(prompt_length)
@@ -317,7 +323,10 @@ class HoCRSDataCollator:
                 token_ids["graph_start_token_ids"][view],
                 token_ids["graph_end_token_ids"][view],
                 token_ids["node_token_id"],
-                [graph.num_nodes if graph is not None else 0 for graph in graphs_by_row],
+                [
+                    graph.num_nodes if graph is not None else 0
+                    for graph in graphs_by_row
+                ],
             )
             graph_batch["hyperedge_positions"] = self._positions(
                 input_ids,
@@ -348,6 +357,11 @@ class HoCRSDataCollator:
             views,
             token_ids,
         )
+        preference_mask = (
+            encoded["attention_mask"].bool()
+            & labels.eq(-100)
+            & encoded["input_ids"].ne(token_ids["rec_token_id"])
+        )
         hypergraphs = self._batch_graph_views(
             graph_sets,
             views,
@@ -360,6 +374,7 @@ class HoCRSDataCollator:
                 "input_ids": encoded["input_ids"],
                 "attention_mask": encoded["attention_mask"],
                 "labels": labels,
+                "preference_mask": preference_mask,
                 "rec_labels": torch.tensor(
                     [feature["target_item_id"] for feature in features],
                     dtype=torch.long,

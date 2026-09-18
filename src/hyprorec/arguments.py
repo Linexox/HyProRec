@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from accelerate import ParallelismConfig
 from transformers import TrainingArguments
 
-from .constants import GRAPH_VIEWS
+from .constants import GRAPH_VIEWS, MODALITIES
 
 
 @dataclass
@@ -17,44 +17,32 @@ class ModelArguments:
     beta: float = 0.75
     num_soft_prompt_tokens: int = 10
     train_special_tokens: bool = False
-    use_context_token: bool = False
     hypergraph_hidden_dim: int = 1024
     hypergraph_output_dim: int = 256
     hypergraph_num_layers: int = 3
     hypergraph_dropout: float = 0.0
-    use_hypergraph_encoder: bool = True
     grounding_checkpoint_path: str | None = None
     grounding_ga_sa_weight: float = 1.0
     grounding_ga_sn_weight: float = 3.0
     grounding_sa_sn_weight: float = 3.0
     grounding_temperature: float = 0.07
-    item_table_mode: str = "id"
-    semantic_item_dim: int = 256
-    use_semantic_hypergraph_nodes: bool = False
+    item_table_view: str = "txt"
     recommendation_hidden_dim: int = 2048
     grounding_tokenizer_name_or_path: str = "sentence-transformers/all-mpnet-base-v2"
-    recommendation_dropout: float = 0.0
     recommendation_temperature: float = 0.07
-    use_moe: bool = False
-    moe_num_experts: int = 4
     moe_hidden_dim: int = 512
     moe_router_temperature: float = 1.0
     moe_residual_scale_init: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.item_table_mode not in {"id", "semantic_hybrid"}:
-            raise ValueError("item_table_mode must be 'id' or 'semantic_hybrid'.")
-        if self.semantic_item_dim < 1:
-            raise ValueError("semantic_item_dim must be positive.")
-        if (
-            self.use_semantic_hypergraph_nodes
-            and self.item_table_mode != "semantic_hybrid"
-        ):
-            raise ValueError(
-                "use_semantic_hypergraph_nodes requires item_table_mode='semantic_hybrid'."
-            )
+        if self.item_table_view not in MODALITIES:
+            raise ValueError(f"item_table_view must be one of {MODALITIES}.")
         if self.grounding_temperature <= 0:
             raise ValueError("grounding_temperature must be positive.")
+        if self.recommendation_hidden_dim < 1:
+            raise ValueError("recommendation_hidden_dim must be positive.")
+        if self.recommendation_temperature <= 0:
+            raise ValueError("recommendation_temperature must be positive.")
 
 
 @dataclass

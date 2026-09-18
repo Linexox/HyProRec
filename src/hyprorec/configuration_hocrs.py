@@ -6,7 +6,7 @@ from typing import Any
 
 from transformers import AutoConfig, GPT2Config, PretrainedConfig
 
-from .constants import GRAPH_VIEWS
+from .constants import GRAPH_VIEWS, MODALITIES
 
 
 class HoCRSHypergraphConfig(PretrainedConfig):
@@ -77,16 +77,11 @@ class HoCRSConfig(PretrainedConfig):
         ado_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         vdo_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         num_items: int = 6924,
-        item_dim: int = 2048,
-        use_hypergraph_encoder: bool = True,
+        item_feature_dim: int = 768,
+        item_table_view: str = "txt",
         grounding_checkpoint_path: str | None = None,
-        item_table_mode: str = "id",
-        use_semantic_hypergraph_nodes: bool = False,
         recommendation_hidden_dim: int = 2048,
-        recommendation_dropout: float = 0.0,
         recommendation_temperature: float = 0.07,
-        use_moe: bool = False,
-        moe_num_experts: int = 4,
         moe_hidden_dim: int = 512,
         moe_router_temperature: float = 1.0,
         moe_residual_scale_init: float = 1.0,
@@ -94,11 +89,9 @@ class HoCRSConfig(PretrainedConfig):
         num_soft_prompt_tokens: int = 10,
         freeze_backbone: bool = True,
         train_special_tokens: bool = False,
-        use_context_token: bool = False,
         node_token_id: int | None = None,
         hyperedge_token_id: int | None = None,
         rec_token_id: int | None = None,
-        context_token_id: int | None = None,
         soft_prompt_token_id: int | None = None,
         graph_start_token_ids: dict[str, int] | None = None,
         graph_end_token_ids: dict[str, int] | None = None,
@@ -118,18 +111,14 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("beta must be in [0, 1].")
         if num_items <= 0:
             raise ValueError("num_items must be positive.")
-        if item_table_mode not in {"id", "semantic_hybrid"}:
-            raise ValueError("item_table_mode must be 'id' or 'semantic_hybrid'.")
-        if item_table_mode == "semantic_hybrid" and not set(views).intersection(
-            GRAPH_VIEWS
-        ):
-            raise ValueError("semantic_hybrid requires at least one modality view.")
-        if use_semantic_hypergraph_nodes and item_table_mode != "semantic_hybrid":
-            raise ValueError(
-                "use_semantic_hypergraph_nodes requires item_table_mode='semantic_hybrid'."
-            )
-        if moe_num_experts < 2:
-            raise ValueError("moe_num_experts must be at least 2.")
+        if item_feature_dim < 1:
+            raise ValueError("item_feature_dim must be positive.")
+        if item_table_view not in MODALITIES:
+            raise ValueError(f"item_table_view must be one of {MODALITIES}.")
+        if recommendation_hidden_dim < 1:
+            raise ValueError("recommendation_hidden_dim must be positive.")
+        if recommendation_temperature <= 0:
+            raise ValueError("recommendation_temperature must be positive.")
         if moe_hidden_dim < 1:
             raise ValueError("moe_hidden_dim must be positive.")
         if moe_router_temperature <= 0:
@@ -142,17 +131,20 @@ class HoCRSConfig(PretrainedConfig):
         self.img_hypergraph_config = _hypergraph_config(img_hypergraph_config)
         self.ado_hypergraph_config = _hypergraph_config(ado_hypergraph_config)
         self.vdo_hypergraph_config = _hypergraph_config(vdo_hypergraph_config)
+        if (
+            item_table_view in views
+            and self.get_hypergraph_config(item_table_view).input_dim
+            != item_feature_dim
+        ):
+            raise ValueError(
+                "The Item Table feature dimension must match its graph view."
+            )
         self.num_items = num_items
-        self.item_dim = item_dim
-        self.use_hypergraph_encoder = use_hypergraph_encoder
+        self.item_feature_dim = item_feature_dim
+        self.item_table_view = item_table_view
         self.grounding_checkpoint_path = grounding_checkpoint_path
-        self.item_table_mode = item_table_mode
-        self.use_semantic_hypergraph_nodes = use_semantic_hypergraph_nodes
         self.recommendation_hidden_dim = recommendation_hidden_dim
-        self.recommendation_dropout = recommendation_dropout
         self.recommendation_temperature = recommendation_temperature
-        self.use_moe = use_moe
-        self.moe_num_experts = moe_num_experts
         self.moe_hidden_dim = moe_hidden_dim
         self.moe_router_temperature = moe_router_temperature
         self.moe_residual_scale_init = moe_residual_scale_init
@@ -160,11 +152,9 @@ class HoCRSConfig(PretrainedConfig):
         self.num_soft_prompt_tokens = num_soft_prompt_tokens
         self.freeze_backbone = freeze_backbone
         self.train_special_tokens = train_special_tokens
-        self.use_context_token = use_context_token
         self.node_token_id = node_token_id
         self.hyperedge_token_id = hyperedge_token_id
         self.rec_token_id = rec_token_id
-        self.context_token_id = context_token_id
         self.soft_prompt_token_id = soft_prompt_token_id
         self.graph_start_token_ids = graph_start_token_ids or {}
         self.graph_end_token_ids = graph_end_token_ids or {}

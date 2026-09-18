@@ -6,18 +6,13 @@ model:
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
-  use_hypergraph_encoder: true
   grounding_checkpoint_path: outputs/redial/hocrs/grounding-wo-co-hyprorec
-  item_table_mode: semantic_hybrid
-  semantic_item_dim: 256
-  use_semantic_hypergraph_nodes: true
+  item_table_view: ado
   recommendation_hidden_dim: 2048
-  use_moe: true
-  moe_num_experts: 4
+  recommendation_temperature: 0.07
   moe_hidden_dim: 512
   moe_router_temperature: 1.0
   moe_residual_scale_init: 1.0
-  use_context_token: true
 data:
   dataset_path: data/hocrs2_redial
   hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
@@ -29,7 +24,7 @@ data:
   max_history_tokens: 1024
   max_response_tokens: 64
 training:
-  output_dir: outputs/redial/hocrs/full-moe-token-v4-h1024-ctx-semantic-shared
+  output_dir: outputs/redial/hocrs/full-item-ado
   do_train: true
   do_eval: true
   do_predict: true
@@ -50,6 +45,6 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   report_to: wandb
-  run_name: full-moe-token-v4-h1024-ctx-semantic-shared
+  run_name: full-item-ado
   seed: 42
   data_seed: 42

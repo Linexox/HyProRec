@@ -29,7 +29,7 @@ from safetensors.torch import load_file
 
 
 class HoCRSFidelityTest(unittest.TestCase):
-    def test_id_item_width_is_independent_of_modality_width(self):
+    def test_semantic_item_projection_is_independent_of_modality_width(self):
         processor = build_processor()
         backbone = GPT2LMHeadModel(
             GPT2Config(
@@ -44,24 +44,19 @@ class HoCRSFidelityTest(unittest.TestCase):
         )
         with mock.patch("hyprorec.scripts.train.load_backbone", return_value=backbone):
             model = _build_model(
-                ModelArguments(),
+                ModelArguments(item_table_view="txt"),
                 DataArguments(views=["txt"]),
                 processor,
                 {"txt": torch.randn(3, 256)},
-                torch.zeros(3),
             )
         self.assertEqual(
-            tuple(model.recommendation_head.user_projector[0].weight.shape),
+            tuple(model.recommendation_head.query_projector.weight.shape),
             (2048, 2048),
         )
         self.assertEqual(
-            tuple(model.recommendation_head.user_projector[3].weight.shape),
-            (2048, 2048),
+            tuple(model.recommendation_head.item_projector.weight.shape),
+            (2048, 256),
         )
-        self.assertEqual(
-            tuple(model.recommendation_head.item_table.weight.shape), (3, 2048)
-        )
-        self.assertTrue(model.recommendation_head.item_table.weight.requires_grad)
 
     def test_sequential_grounding_exports_each_validation_best(self):
         from transformers import ViTConfig
@@ -337,18 +332,20 @@ class HoCRSFidelityTest(unittest.TestCase):
                 ),
                 views=[],
                 num_items=3,
-                item_dim=8,
+                item_feature_dim=8,
                 recommendation_hidden_dim=8,
                 rec_token_id=3,
                 num_soft_prompt_tokens=0,
                 freeze_backbone=True,
             )
             model = HoCRSModel(config)
+            model.initialize_feature_tables({"txt": torch.randn(3, 8)})
             samples = [
                 {
                     "input_ids": torch.tensor([2, 3, 4, 5]),
                     "attention_mask": torch.ones(4, dtype=torch.long),
                     "labels": torch.tensor([-100, -100, 4, 5]),
+                    "preference_mask": torch.tensor([True, True, False, False]),
                     "rec_labels": torch.tensor(i),
                 }
                 for i in [0, 1]
@@ -402,8 +399,6 @@ class HoCRSFidelityTest(unittest.TestCase):
             torch.testing.assert_close(
                 large[key], accumulated[key], rtol=1e-4, atol=1e-5
             )
-
-
 
 
 if __name__ == "__main__":

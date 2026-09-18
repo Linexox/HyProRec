@@ -23,7 +23,10 @@ from ..modeling_hocrs import HoCRSModel, load_backbone
 from ..processing_hocrs import HoCRSProcessor
 
 
-def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
+def _load_modality_tables(
+    data_args: DataArguments,
+    item_table_view: str,
+) -> dict[str, torch.Tensor]:
     dataset_path = Path(data_args.dataset_path)
     embedding_path = dataset_path / data_args.embeddings_dir_name
     tables = {
@@ -32,32 +35,12 @@ def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
             map_location="cpu",
             weights_only=True,
         ).float()
-        for modality in data_args.views
-        if modality in MODALITIES
+        for modality in MODALITIES
+        if modality in {*data_args.views, item_table_view}
     }
     if any(table.ndim != 2 for table in tables.values()):
         raise ValueError("Every modality embedding table must be two-dimensional.")
     return tables
-
-
-def _load_item_target_frequencies(
-    data_args: DataArguments,
-    num_items: int,
-) -> torch.Tensor:
-    frequencies = torch.zeros(num_items, dtype=torch.float32)
-    path = Path(data_args.dataset_path) / "train_data.json"
-    with path.open(encoding="utf-8") as file:
-        conversations = json.load(file)
-    for conversation in conversations:
-        for turn in conversation["dialog"]:
-            if turn["role"] != "Recommender":
-                continue
-            for item_id in turn.get("items", []):
-                item_id = int(item_id)
-                if not 0 <= item_id < num_items:
-                    raise ValueError(f"Train target item {item_id} is outside the catalogue.")
-                frequencies[item_id] += 1
-    return frequencies
 
 
 def _build_model(
@@ -65,7 +48,6 @@ def _build_model(
     data_args: DataArguments,
     processor: HoCRSProcessor,
     modality_tables: dict[str, torch.Tensor],
-    item_frequencies: torch.Tensor,
 ) -> HoCRSModel:
     backbone = load_backbone(model_args.backbone_name_or_path)
     backbone.resize_token_embeddings(len(processor.tokenizer))
@@ -93,26 +75,16 @@ def _build_model(
         backbone_config=backbone.config,
         views=data_args.views,
         num_items=num_items,
-        item_dim=(
-            model_args.semantic_item_dim
-            if model_args.item_table_mode == "semantic_hybrid"
-            else model_args.recommendation_hidden_dim
-        ),
-        use_hypergraph_encoder=model_args.use_hypergraph_encoder,
+        item_feature_dim=modality_tables[model_args.item_table_view].size(1),
+        item_table_view=model_args.item_table_view,
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
-        item_table_mode=model_args.item_table_mode,
-        use_semantic_hypergraph_nodes=model_args.use_semantic_hypergraph_nodes,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
-        recommendation_dropout=model_args.recommendation_dropout,
         recommendation_temperature=model_args.recommendation_temperature,
-        use_moe=model_args.use_moe,
-        moe_num_experts=model_args.moe_num_experts,
         moe_hidden_dim=model_args.moe_hidden_dim,
         moe_router_temperature=model_args.moe_router_temperature,
         moe_residual_scale_init=model_args.moe_residual_scale_init,
         beta=model_args.beta,
         num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
-        use_context_token=model_args.use_context_token,
         freeze_backbone=model_args.freeze_backbone,
         train_special_tokens=model_args.train_special_tokens,
         txt_hypergraph_config=graph_configs.get("txt"),
@@ -124,10 +96,7 @@ def _build_model(
     model = HoCRSModel(config, backbone=backbone)
     if model_args.grounding_checkpoint_path:
         model.load_grounding_checkpoint(model_args.grounding_checkpoint_path)
-    model.initialize_feature_tables(
-        modality_tables,
-        item_frequencies=item_frequencies,
-    )
+    model.initialize_feature_tables(modality_tables)
     return model
 
 
@@ -196,21 +165,16 @@ def main() -> None:
     processor = HoCRSProcessor(
         tokenizer=tokenizer,
         num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
-        use_context_token=model_args.use_context_token,
     )
-    modality_tables = _load_modality_tables(data_args)
-    if not modality_tables:
-        raise ValueError("CRS training requires at least one modality view.")
-    item_frequencies = _load_item_target_frequencies(
+    modality_tables = _load_modality_tables(
         data_args,
-        next(iter(modality_tables.values())).size(0),
+        model_args.item_table_view,
     )
     model = _build_model(
         model_args,
         data_args,
         processor,
         modality_tables,
-        item_frequencies,
     )
 
     dataset_config = HoCRSDatasetConfig(
@@ -232,11 +196,25 @@ def main() -> None:
                 f"{hypergraph_table.num_items} and {model.config.num_items}."
             )
 
-    train_dataset = HoCRSDataset(dataset_config, "train", hypergraph_table) if training_args.do_train else None
-    eval_dataset = HoCRSDataset(dataset_config, "validation", hypergraph_table) if training_args.do_eval else None
-    test_dataset = HoCRSDataset(dataset_config, "test", hypergraph_table) if (training_args.do_train or training_args.do_predict) else None
+    train_dataset = (
+        HoCRSDataset(dataset_config, "train", hypergraph_table)
+        if training_args.do_train
+        else None
+    )
+    eval_dataset = (
+        HoCRSDataset(dataset_config, "validation", hypergraph_table)
+        if training_args.do_eval
+        else None
+    )
+    test_dataset = (
+        HoCRSDataset(dataset_config, "test", hypergraph_table)
+        if (training_args.do_train or training_args.do_predict)
+        else None
+    )
 
-    test_callback = TestEvaluationCallback(test_dataset) if test_dataset is not None else None
+    test_callback = (
+        TestEvaluationCallback(test_dataset) if test_dataset is not None else None
+    )
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -267,7 +245,9 @@ def main() -> None:
         )
 
     if training_args.do_train:
-        train_result = trainer.train(resume_from_checkpoint=_resolve_resume_checkpoint(training_args))
+        train_result = trainer.train(
+            resume_from_checkpoint=_resolve_resume_checkpoint(training_args)
+        )
         trainer.save_model()
         trainer.save_state()
         trainer.log_metrics("train", train_result.metrics)

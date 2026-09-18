@@ -19,7 +19,6 @@ from hyprorec.metrics import recommendation_metrics
 from hyprorec.modeling_hocrs import HoCRSModel
 from hyprorec.processing_hocrs import HoCRSProcessor
 
-
 SPLIT_FILES = {"valid": "valid_data.json", "test": "test_data.json"}
 DATASET_SPLITS = {"valid": "validation", "test": "test"}
 
@@ -174,7 +173,6 @@ def main() -> None:
     processor = HoCRSProcessor(
         tokenizer=tokenizer,
         num_soft_prompt_tokens=model.config.num_soft_prompt_tokens,
-        use_context_token=model.config.use_context_token,
     )
     collator = HoCRSDataCollator(
         processor,
@@ -184,8 +182,7 @@ def main() -> None:
     )
     dataset_path = Path(data_args.dataset_path)
     table_path = Path(
-        data_args.hyperedge_table_path
-        or dataset_path / "hyperedge_table.json"
+        data_args.hyperedge_table_path or dataset_path / "hyperedge_table.json"
     )
     hypergraph_table = (
         HypergraphTable.from_json(table_path) if data_args.views else None

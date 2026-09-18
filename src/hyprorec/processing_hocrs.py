@@ -16,7 +16,6 @@ HYPEREDGE_START_TOKEN = "<|hyperedge_start|>"
 HYPEREDGE_TOKEN = "<|hyperedge|>"
 HYPEREDGE_END_TOKEN = "<|hyperedge_end|>"
 REC_TOKEN = "<|rec|>"
-CONTEXT_TOKEN = "<|ctx|>"
 SOFT_PROMPT_TOKEN = "<|soft_prompt|>"
 
 
@@ -38,14 +37,11 @@ class HoCRSProcessor(ProcessorMixin):
         self,
         tokenizer,
         num_soft_prompt_tokens: int = 10,
-        use_context_token: bool = False,
         chat_template: str | None = None,
     ) -> None:
         if num_soft_prompt_tokens < 0:
             raise ValueError("num_soft_prompt_tokens must be non-negative.")
         tokens = self.get_special_tokens()
-        if use_context_token:
-            tokens.append(CONTEXT_TOKEN)
         tokenizer.add_special_tokens({"additional_special_tokens": tokens})
         if tokenizer.pad_token_id is None:
             if tokenizer.eos_token_id is None:
@@ -54,7 +50,6 @@ class HoCRSProcessor(ProcessorMixin):
         tokenizer.padding_side = "right"
         tokenizer.truncation_side = "left"
         self.num_soft_prompt_tokens = num_soft_prompt_tokens
-        self.use_context_token = use_context_token
         super().__init__(tokenizer=tokenizer, chat_template=chat_template)
 
     @staticmethod
@@ -88,15 +83,12 @@ class HoCRSProcessor(ProcessorMixin):
             "node_token_id": convert(NODE_TOKEN),
             "hyperedge_token_id": convert(HYPEREDGE_TOKEN),
             "rec_token_id": convert(REC_TOKEN),
-            "context_token_id": convert(CONTEXT_TOKEN) if self.use_context_token else None,
             "soft_prompt_token_id": convert(SOFT_PROMPT_TOKEN),
             "graph_start_token_ids": {
-                view: convert(graph_start_token(view))
-                for view in GRAPH_VIEWS
+                view: convert(graph_start_token(view)) for view in GRAPH_VIEWS
             },
             "graph_end_token_ids": {
-                view: convert(graph_end_token(view))
-                for view in GRAPH_VIEWS
+                view: convert(graph_end_token(view)) for view in GRAPH_VIEWS
             },
             "trainable_special_token_ids": [
                 convert(token) for token in boundary_tokens
@@ -107,7 +99,9 @@ class HoCRSProcessor(ProcessorMixin):
         if view not in GRAPH_VIEWS:
             raise ValueError(f"Unknown graph view: {view}")
         if num_nodes <= 0 or num_hyperedges <= 0:
-            raise ValueError("Serialized hypergraphs must contain nodes and hyperedges.")
+            raise ValueError(
+                "Serialized hypergraphs must contain nodes and hyperedges."
+            )
 
         return "".join(
             (
@@ -133,14 +127,12 @@ class HoCRSProcessor(ProcessorMixin):
             for view in graph_sizes
         )
         soft_prompts = SOFT_PROMPT_TOKEN * self.num_soft_prompt_tokens
-        context_state = f"{CONTEXT_TOKEN}\n" if self.use_context_token else ""
 
         if graph_text:
             user_text = (
                 "Use the conversation history and the supplied hypergraphs to infer "
                 "the user's preference, recommend an appropriate movie, and respond.\n"
                 f"Conversation History:\n{context}\n"
-                f"{context_state}"
                 f"Hypergraphs:\n{graph_text}\n"
                 f"Recommendation state: {REC_TOKEN}{soft_prompts}"
             )
@@ -149,10 +141,9 @@ class HoCRSProcessor(ProcessorMixin):
                 "Use the conversation history to infer the user's preference, "
                 "recommend an appropriate movie, and respond.\n"
                 f"Conversation History:\n{context}\n"
-                f"{context_state}"
                 f"Recommendation state: {REC_TOKEN}{soft_prompts}"
             )
-        
+
         if self.tokenizer.chat_template is not None:
             return self.tokenizer.apply_chat_template(
                 [{"role": "user", "content": user_text}],
@@ -167,7 +158,6 @@ class HoCRSProcessor(ProcessorMixin):
 
 __all__ = [
     "HYPEREDGE_TOKEN",
-    "CONTEXT_TOKEN",
     "NODE_TOKEN",
     "REC_TOKEN",
     "SOFT_PROMPT_TOKEN",
