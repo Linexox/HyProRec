@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source ~/lhf/init.sh
-cd /data2/lhf/HyProRec
+PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$PROJECT_ROOT"
 export PATH=/data2/lhf/HoCRS-v3/.venv/bin:$PATH
 export PYTHONPATH=$PWD/src
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
