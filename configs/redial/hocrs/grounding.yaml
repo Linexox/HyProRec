@@ -35,8 +35,10 @@ training:
   seed: 42
   data_seed: 42
   bf16: true
-  eval_strategy: epoch
-  save_strategy: epoch
+  eval_strategy: steps
+  eval_steps: 200
+  save_strategy: steps
+  save_steps: 200
   load_best_model_at_end: true
   metric_for_best_model: eval_loss
   greater_is_better: false

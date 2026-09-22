@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from copy import copy
 from dataclasses import asdict
 from pathlib import Path
 
@@ -107,12 +106,14 @@ class TestEvaluationCallback(TrainerCallback):
         self.dataset = dataset
         self.trainer = None
 
-    def on_epoch_end(self, args, state, control, **kwargs):
-        previous = copy(control)
+    def on_step_end(self, args, state, control, **kwargs):
+        eval_steps = args.eval_steps
+        if eval_steps is None or state.global_step % int(eval_steps) != 0:
+            return control
         metrics = self.trainer.evaluate(eval_dataset=self.dataset, metric_key_prefix="test")
         if self.trainer.is_world_process_zero():
             self.trainer.save_metrics("test", metrics)
-        return previous
+        return control
 
 
 def _save_provenance(output_dir, config_path, model_args, data_args, training_args):
