@@ -1,4 +1,4 @@
-"""Configuration classes for HoCRS."""
+"""Configuration for the decoupled HyProRec models."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from transformers import AutoConfig, GPT2Config, PretrainedConfig
 
 from .constants import GRAPH_VIEWS, MODALITIES
 
+ALL_GRAPH_VIEWS = (*GRAPH_VIEWS, "co")
+
 
 class HoCRSHypergraphConfig(PretrainedConfig):
-    """Shape and regularization settings for one hypergraph encoder."""
-
     model_type = "hocrs_hypergraph"
 
     def __init__(
@@ -25,8 +25,8 @@ class HoCRSHypergraphConfig(PretrainedConfig):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        if num_layers < 1:
-            raise ValueError("num_layers must be positive.")
+        if min(input_dim, hidden_dim, output_dim, num_layers) < 1:
+            raise ValueError("Hypergraph dimensions and num_layers must be positive.")
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
@@ -42,136 +42,98 @@ def _backbone_config(
         return GPT2Config()
     if isinstance(value, PretrainedConfig):
         return value
-    config_dict = dict(value)
-    model_type = config_dict.pop("model_type")
-    return AutoConfig.for_model(model_type, **config_dict)
+    values = dict(value)
+    model_type = values.pop("model_type")
+    return AutoConfig.for_model(model_type, **values)
 
 
-def _hypergraph_config(
+def _graph_config(
     value: HoCRSHypergraphConfig | dict[str, Any] | None,
 ) -> HoCRSHypergraphConfig:
     if value is None:
         return HoCRSHypergraphConfig()
-    if isinstance(value, HoCRSHypergraphConfig):
-        return value
-    return HoCRSHypergraphConfig(**value)
+    return (
+        value
+        if isinstance(value, HoCRSHypergraphConfig)
+        else HoCRSHypergraphConfig(**value)
+    )
 
 
 class HoCRSConfig(PretrainedConfig):
-    """Complete serializable configuration for the first HyProRec model."""
-
     model_type = "hocrs"
     is_composition = True
-    keys_to_ignore_at_inference = [
-        "past_key_values",
-        "hidden_states",
-        "attentions",
-    ]
+    keys_to_ignore_at_inference = ["past_key_values", "hidden_states", "attentions"]
 
     def __init__(
         self,
         backbone_config: PretrainedConfig | dict[str, Any] | None = None,
-        views: list[str] | tuple[str, ...] = GRAPH_VIEWS,
+        task: str = "recommendation",
+        recommendation_head: str = "item_table",
+        views: list[str] | tuple[str, ...] = ALL_GRAPH_VIEWS,
+        co_feature_view: str = "txt",
         txt_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         img_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         ado_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         vdo_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
+        co_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         num_items: int = 6924,
-        item_feature_dim: int = 768,
+        item_feature_dims: dict[str, int] | None = None,
         item_table_view: str = "txt",
         grounding_checkpoint_path: str | None = None,
         recommendation_hidden_dim: int = 2048,
         recommendation_temperature: float = 0.07,
-        moe_hidden_dim: int = 512,
-        moe_router_temperature: float = 1.0,
-        moe_residual_scale_init: float = 1.0,
-        beta: float = 0.75,
-        num_soft_prompt_tokens: int = 10,
+        num_prompt_tokens: int = 20,
         freeze_backbone: bool = True,
-        train_special_tokens: bool = False,
-        node_token_id: int | None = None,
-        hyperedge_token_id: int | None = None,
-        rec_token_id: int | None = None,
-        soft_prompt_token_id: int | None = None,
-        graph_start_token_ids: dict[str, int] | None = None,
-        graph_end_token_ids: dict[str, int] | None = None,
-        trainable_special_token_ids: list[int] | tuple[int, ...] | None = None,
+        prompt_token_id: int | None = None,
         **kwargs: Any,
     ) -> None:
         backbone_config = _backbone_config(backbone_config)
         self.backbone_config = backbone_config
-        for token_name in ("bos_token_id", "eos_token_id", "pad_token_id"):
-            kwargs.setdefault(token_name, getattr(backbone_config, token_name, None))
+        for name in ("bos_token_id", "eos_token_id", "pad_token_id"):
+            kwargs.setdefault(name, getattr(backbone_config, name, None))
         super().__init__(**kwargs)
         views = tuple(dict.fromkeys(views))
-        unknown_views = set(views) - set(GRAPH_VIEWS)
-        if unknown_views:
-            raise ValueError(f"Unknown graph views: {sorted(unknown_views)}")
-        if not 0.0 <= beta <= 1.0:
-            raise ValueError("beta must be in [0, 1].")
-        if num_items <= 0:
-            raise ValueError("num_items must be positive.")
-        if item_feature_dim < 1:
-            raise ValueError("item_feature_dim must be positive.")
-        if item_table_view not in MODALITIES:
-            raise ValueError(f"item_table_view must be one of {MODALITIES}.")
-        if recommendation_hidden_dim < 1:
-            raise ValueError("recommendation_hidden_dim must be positive.")
+        if task not in {"recommendation", "conversation"}:
+            raise ValueError("task must be recommendation or conversation.")
+        if recommendation_head not in {"item_table", "mlp"}:
+            raise ValueError("recommendation_head must be item_table or mlp.")
+        if set(views) - set(ALL_GRAPH_VIEWS):
+            raise ValueError(f"views must contain each graph view at most once: {ALL_GRAPH_VIEWS}")
+        if co_feature_view not in MODALITIES:
+            raise ValueError(f"co_feature_view must be one of {MODALITIES}.")
+        if item_table_view not in (*MODALITIES, "full"):
+            raise ValueError("item_table_view must be a modality or full.")
+        if num_items < 1 or recommendation_hidden_dim < 1 or num_prompt_tokens != 20:
+            raise ValueError("num_items and recommendation_hidden_dim must be positive; prompts must have length 20.")
         if recommendation_temperature <= 0:
             raise ValueError("recommendation_temperature must be positive.")
-        if moe_hidden_dim < 1:
-            raise ValueError("moe_hidden_dim must be positive.")
-        if moe_router_temperature <= 0:
-            raise ValueError("moe_router_temperature must be positive.")
-        if moe_residual_scale_init < 0:
-            raise ValueError("moe_residual_scale_init must be non-negative.")
-
+        self.task = task
+        self.recommendation_head = recommendation_head
         self.views = views
-        self.txt_hypergraph_config = _hypergraph_config(txt_hypergraph_config)
-        self.img_hypergraph_config = _hypergraph_config(img_hypergraph_config)
-        self.ado_hypergraph_config = _hypergraph_config(ado_hypergraph_config)
-        self.vdo_hypergraph_config = _hypergraph_config(vdo_hypergraph_config)
-        if (
-            item_table_view in views
-            and self.get_hypergraph_config(item_table_view).input_dim
-            != item_feature_dim
-        ):
-            raise ValueError(
-                "The Item Table feature dimension must match its graph view."
-            )
+        self.co_feature_view = co_feature_view
         self.num_items = num_items
-        self.item_feature_dim = item_feature_dim
+        self.item_feature_dims = dict(item_feature_dims or {})
         self.item_table_view = item_table_view
         self.grounding_checkpoint_path = grounding_checkpoint_path
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_temperature = recommendation_temperature
-        self.moe_hidden_dim = moe_hidden_dim
-        self.moe_router_temperature = moe_router_temperature
-        self.moe_residual_scale_init = moe_residual_scale_init
-        self.beta = beta
-        self.num_soft_prompt_tokens = num_soft_prompt_tokens
+        self.num_prompt_tokens = num_prompt_tokens
         self.freeze_backbone = freeze_backbone
-        self.train_special_tokens = train_special_tokens
-        self.node_token_id = node_token_id
-        self.hyperedge_token_id = hyperedge_token_id
-        self.rec_token_id = rec_token_id
-        self.soft_prompt_token_id = soft_prompt_token_id
-        self.graph_start_token_ids = graph_start_token_ids or {}
-        self.graph_end_token_ids = graph_end_token_ids or {}
-        self.trainable_special_token_ids = tuple(trainable_special_token_ids or ())
+        self.prompt_token_id = prompt_token_id
+        self.txt_hypergraph_config = _graph_config(txt_hypergraph_config)
+        self.img_hypergraph_config = _graph_config(img_hypergraph_config)
+        self.ado_hypergraph_config = _graph_config(ado_hypergraph_config)
+        self.vdo_hypergraph_config = _graph_config(vdo_hypergraph_config)
+        self.co_hypergraph_config = _graph_config(co_hypergraph_config)
 
     def get_hypergraph_config(self, view: str) -> HoCRSHypergraphConfig:
-        if view not in GRAPH_VIEWS:
-            raise KeyError(f"Unknown graph view: {view}")
         return getattr(self, f"{view}_hypergraph_config")
 
     def get_text_config(
-        self,
-        decoder: bool | None = None,
-        encoder: bool | None = None,
+        self, decoder: bool | None = None, encoder: bool | None = None
     ) -> PretrainedConfig:
         del decoder, encoder
         return self.backbone_config
 
 
-__all__ = ["HoCRSConfig", "HoCRSHypergraphConfig"]
+__all__ = ["ALL_GRAPH_VIEWS", "HoCRSConfig", "HoCRSHypergraphConfig"]

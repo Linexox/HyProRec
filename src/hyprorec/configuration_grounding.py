@@ -29,8 +29,12 @@ class HoCRSGroundingConfig(PretrainedConfig):
     ) -> None:
         super().__init__(**kwargs)
         self.views = tuple(dict.fromkeys(views))
-        if not set(self.views).issubset(MODALITIES):
-            raise ValueError(f"Grounding views must be chosen from {MODALITIES}.")
+        if not set(self.views).issubset(
+            (*MODALITIES, *(f"co_{view}" for view in MODALITIES))
+        ):
+            raise ValueError(
+                "Grounding views must be semantic modalities or modality-initialized co views."
+            )
         self.input_dims = dict(input_dims or {})
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim

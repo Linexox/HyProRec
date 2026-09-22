@@ -10,7 +10,7 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, Trainer, set_seed
+from transformers import AutoTokenizer, EarlyStoppingCallback, Trainer, set_seed
 
 from ..arguments import DataArguments, ModelArguments
 from ..config import parse_experiment_args
@@ -50,8 +50,7 @@ def _load_feature_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
             map_location="cpu",
             weights_only=True,
         ).float()
-        for view in data_args.views
-        if view in MODALITIES
+        for view in MODALITIES
     }
 
 
@@ -59,9 +58,11 @@ def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
     set_seed(training_args.seed)
-    views = tuple(view for view in data_args.views if view in MODALITIES)
+    views = (*MODALITIES, *(f"co_{view}" for view in MODALITIES))
     feature_tables = _load_feature_tables(data_args)
-    input_dims = {view: feature_tables[view].size(1) for view in views}
+    input_dims = {
+        view: feature_tables[view.removeprefix("co_")].size(1) for view in views
+    }
     config = HoCRSGroundingConfig(
         views=views,
         input_dims=input_dims,
@@ -78,12 +79,6 @@ def main() -> None:
         Path(data_args.dataset_path) / "hyperedge_table.json"
     )
     table = HypergraphTable.from_json(table_path)
-    if (
-        not training_args.do_train
-        or not training_args.do_eval
-        or not training_args.load_best_model_at_end
-    ):
-        raise ValueError("Grounding requires training, validation, and load_best_model_at_end.")
     combined_state = {}
     selections = {}
     for view in views:
@@ -91,8 +86,11 @@ def main() -> None:
         view_config = copy.deepcopy(config)
         view_config.views = (view,)
         tokenizer = None
-        if view == "txt":
-            tokenizer = AutoTokenizer.from_pretrained(model_args.grounding_tokenizer_name_or_path)
+        source_view = view.removeprefix("co_")
+        if source_view == "txt":
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_args.grounding_tokenizer_name_or_path
+            )
             source_config = build_source_config(view)
             source_config.vocab_size = len(tokenizer)
             view_config.source_configs[view] = source_config.to_dict()
@@ -100,13 +98,13 @@ def main() -> None:
         config.source_configs.update(view_config.source_configs)
         args = copy.deepcopy(training_args)
         args.output_dir = str(Path(training_args.output_dir) / view)
-        args.run_name = f"{training_args.run_name or 'grounding'}-{view}"
+        args.run_name = view.replace("_", "-")
         args.label_names = []
         args.prediction_loss_only = True
         args.metric_for_best_model = "eval_loss"
         args.greater_is_better = False
         dataset = HoCRSGroundingDataset(
-            table, (view,),topk=data_args.topk, khop=data_args.khop
+            table, (view,), topk=data_args.topk, khop=data_args.khop
         )
         split = int(len(dataset) * 0.9)
         train_dataset, eval_dataset = torch.utils.data.random_split(
@@ -118,13 +116,14 @@ def main() -> None:
             model=model,
             args=args,
             data_collator=HoCRSGroundingCollator(
-                {view: feature_tables[view]},
+                {source_view: feature_tables[source_view]},
                 (view,),
-                GroundingSourceDataset(data_args.dataset_path, (view,)),
+                GroundingSourceDataset(data_args.dataset_path, (source_view,)),
                 tokenizer,
             ),
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
         )
         result = trainer.train(
             resume_from_checkpoint=training_args.resume_from_checkpoint
@@ -143,11 +142,12 @@ def main() -> None:
                 "checkpoint": trainer.state.best_model_checkpoint,
                 "eval_loss": trainer.state.best_metric,
             }
-            
+
             if "wandb" in args.report_to:
                 import wandb
+
                 wandb.finish()
-        
+
         trainer.accelerator.wait_for_everyone()
         is_main_process = trainer.is_world_process_zero()
         trainer.accelerator.free_memory()

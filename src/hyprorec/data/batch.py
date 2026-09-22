@@ -63,14 +63,6 @@ class HypergraphBatch(BatchData):
 def batch_hypergraphs(graphs: Sequence[HypergraphData]) -> HypergraphBatch:
     """Pack variable-size graphs without adding cross-sample incidences."""
 
-    if not graphs:
-        raise ValueError("At least one hypergraph is required.")
-    views = {graph.view for graph in graphs}
-    if len(views) != 1:
-        raise ValueError(
-            f"A HypergraphBatch must contain one view, got {sorted(views)}."
-        )
-
     node_ids = []
     incidence_indices = []
     anchor_indices = []

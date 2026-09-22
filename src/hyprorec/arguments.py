@@ -1,4 +1,4 @@
-"""Typed experiment arguments for HoCRS training."""
+"""Typed experiment arguments for the independent HyProRec tasks."""
 
 from __future__ import annotations
 
@@ -7,16 +7,17 @@ from dataclasses import dataclass, field
 from accelerate import ParallelismConfig
 from transformers import TrainingArguments
 
-from .constants import GRAPH_VIEWS, MODALITIES
+from .configuration_hocrs import ALL_GRAPH_VIEWS
+from .constants import MODALITIES
 
 
 @dataclass
 class ModelArguments:
     backbone_name_or_path: str = "microsoft/DialoGPT-small"
+    task: str = "recommendation"
+    recommendation_head: str = "item_table"
     freeze_backbone: bool = True
-    beta: float = 0.75
-    num_soft_prompt_tokens: int = 10
-    train_special_tokens: bool = False
+    num_prompt_tokens: int = 20
     hypergraph_hidden_dim: int = 1024
     hypergraph_output_dim: int = 256
     hypergraph_num_layers: int = 3
@@ -26,49 +27,56 @@ class ModelArguments:
     grounding_ga_sn_weight: float = 3.0
     grounding_sa_sn_weight: float = 3.0
     grounding_temperature: float = 0.07
-    item_table_view: str = "txt"
-    recommendation_hidden_dim: int = 2048
     grounding_tokenizer_name_or_path: str = "sentence-transformers/all-mpnet-base-v2"
+    item_table_view: str = "txt"
+    co_feature_view: str = "txt"
+    recommendation_hidden_dim: int = 2048
     recommendation_temperature: float = 0.07
-    moe_hidden_dim: int = 512
-    moe_router_temperature: float = 1.0
-    moe_residual_scale_init: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.item_table_view not in MODALITIES:
-            raise ValueError(f"item_table_view must be one of {MODALITIES}.")
-        if self.grounding_temperature <= 0:
-            raise ValueError("grounding_temperature must be positive.")
-        if self.recommendation_hidden_dim < 1:
-            raise ValueError("recommendation_hidden_dim must be positive.")
-        if self.recommendation_temperature <= 0:
-            raise ValueError("recommendation_temperature must be positive.")
+        if self.task not in {"recommendation", "conversation"}:
+            raise ValueError("task must be recommendation or conversation.")
+        if self.recommendation_head not in {"item_table", "mlp"}:
+            raise ValueError("recommendation_head must be item_table or mlp.")
+        if self.item_table_view not in (*MODALITIES, "full"):
+            raise ValueError("item_table_view must be a modality or full.")
+        if self.co_feature_view not in MODALITIES:
+            raise ValueError(f"co_feature_view must be one of {MODALITIES}.")
+        if self.num_prompt_tokens != 20 or self.recommendation_hidden_dim < 1:
+            raise ValueError(
+                "num_prompt_tokens must be 20 and recommendation_hidden_dim positive."
+            )
 
 
 @dataclass
 class DataArguments:
-    dataset_path: str = "data/lhf-redial"
+    dataset_path: str = "data/hocrs2_redial"
     hyperedge_table_path: str | None = None
     embeddings_dir_name: str = "embeddings"
-    views: list[str] = field(default_factory=lambda: list(GRAPH_VIEWS))
+    views: list[str] = field(default_factory=lambda: list(ALL_GRAPH_VIEWS))
     topk: int = 3
     khop: int = 2
-    max_length: int = 1024
-    max_history_tokens: int = 150
-    max_response_tokens: int = 64
+    hyperedge_sampling: str = "strict"
+    sample_repeat: int = 1
+    max_history_tokens: int = 256
 
     def __post_init__(self) -> None:
         self.views = list(dict.fromkeys(self.views))
-        unknown_views = set(self.views) - set(GRAPH_VIEWS)
-        if unknown_views:
-            raise ValueError(f"Unknown graph views: {sorted(unknown_views)}")
+        if set(self.views) - set(ALL_GRAPH_VIEWS):
+            raise ValueError(f"Unknown or duplicated graph views: {self.views}")
+        if not 0 <= self.topk <= 10:
+            raise ValueError("topk must be between 0 and 10.")
+        if self.hyperedge_sampling not in {"strict", "random"}:
+            raise ValueError("hyperedge_sampling must be strict or random.")
+        if self.sample_repeat < 1 or not 0 < self.max_history_tokens <= 256:
+            raise ValueError(
+                "sample_repeat must be positive and max_history_tokens must be at most 256."
+            )
 
 
 @dataclass
 class HoCRSTrainingArguments(TrainingArguments):
-    """TrainingArguments with explicit FSDP2/HSDP mesh dimensions."""
-
-    output_dir: str = "outputs/redial/v1"
+    output_dir: str = "outputs/redial/hocrs"
     remove_unused_columns: bool = False
     label_names: list[str] | None = field(
         default_factory=lambda: ["labels", "rec_labels"]
@@ -80,23 +88,17 @@ class HoCRSTrainingArguments(TrainingArguments):
         if self.dp_replicate_size < 1 or self.dp_shard_size < 1:
             raise ValueError("Data-parallel mesh dimensions must be positive.")
         if self.dp_shard_size == 1 and self.dp_replicate_size != 1:
-            raise ValueError(
-                "Use ordinary DDP for replication-only training; "
-                "HSDP requires dp_shard_size > 1."
-            )
+            raise ValueError("Use ordinary DDP for replication-only training.")
         if self.dp_shard_size > 1:
             if self.parallelism_config is not None:
-                raise ValueError(
-                    "Set dp_replicate_size/dp_shard_size or parallelism_config, not both."
-                )
+                raise ValueError("Set mesh dimensions or parallelism_config, not both.")
             self.fsdp = True
-            if self.fsdp_config is None:
-                self.fsdp_config = {
-                    "version": 2,
-                    "reshard_after_forward": True,
-                    "auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
-                    "state_dict_type": "FULL_STATE_DICT",
-                }
+            self.fsdp_config = self.fsdp_config or {
+                "version": 2,
+                "reshard_after_forward": True,
+                "auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+                "state_dict_type": "FULL_STATE_DICT",
+            }
             self.parallelism_config = ParallelismConfig(
                 dp_replicate_size=self.dp_replicate_size,
                 dp_shard_size=self.dp_shard_size,
@@ -104,8 +106,4 @@ class HoCRSTrainingArguments(TrainingArguments):
         super().__post_init__()
 
 
-__all__ = [
-    "DataArguments",
-    "HoCRSTrainingArguments",
-    "ModelArguments",
-]
+__all__ = ["DataArguments", "HoCRSTrainingArguments", "ModelArguments"]

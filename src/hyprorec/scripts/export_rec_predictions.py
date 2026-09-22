@@ -16,7 +16,7 @@ from hyprorec.config import parse_experiment_args
 from hyprorec.data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
 from hyprorec.data.hypergraph import HypergraphTable
 from hyprorec.metrics import recommendation_metrics
-from hyprorec.modeling_hocrs import HoCRSModel
+from hyprorec.modeling_hocrs import HoCRSRecommendationModel
 from hyprorec.processing_hocrs import HoCRSProcessor
 
 SPLIT_FILES = {"valid": "valid_data.json", "test": "test_data.json"}
@@ -34,7 +34,7 @@ def build_recommendation_metadata(
         history_item_ids: list[int] = []
         for turn_index, turn in enumerate(conversation["dialog"]):
             turn_item_ids = [int(item_id) for item_id in turn.get("items", [])]
-            if turn["role"] == "Recommender" and turn_item_ids:
+            if turn_item_ids:
                 unique_history = list(dict.fromkeys(history_item_ids))
                 turn_id = turn.get("utt_id", turn_index)
                 for target_index, target_item_id in enumerate(turn_item_ids):
@@ -62,7 +62,7 @@ def load_metadata(dataset_path: Path, split: str) -> list[dict[str, Any]]:
 
 @torch.inference_mode()
 def export_split(
-    model: HoCRSModel,
+    model: HoCRSRecommendationModel,
     dataset: HoCRSDataset,
     metadata: Sequence[dict[str, Any]],
     collator: HoCRSDataCollator,
@@ -71,12 +71,6 @@ def export_split(
     num_workers: int,
     device: torch.device,
 ) -> dict[str, Any]:
-    if len(dataset) != len(metadata):
-        raise RuntimeError(
-            "Dataset and metadata sample counts differ: "
-            f"{len(dataset)} != {len(metadata)}."
-        )
-
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -95,8 +89,8 @@ def export_split(
             enabled=device.type == "cuda",
         ):
             output = model(**batch, use_cache=False)
-        topk = min(50, output.rec_scores.size(-1))
-        scores, indices = output.rec_scores.topk(topk, dim=-1)
+        topk = min(50, output.logits.size(-1))
+        scores, indices = output.logits.topk(topk, dim=-1)
         offset = len(rows)
         for row_index, (row_scores, row_indices) in enumerate(zip(scores, indices)):
             row = dict(metadata[offset + row_index])
@@ -166,19 +160,18 @@ def main() -> None:
         load_kwargs["device_map"] = {
             "": device.index if device.index is not None else 0
         }
-    model = HoCRSModel.from_pretrained(str(checkpoint), **load_kwargs)
+    model = HoCRSRecommendationModel.from_pretrained(str(checkpoint), **load_kwargs)
     if device.type != "cuda":
         model.to(device)
 
     processor = HoCRSProcessor(
         tokenizer=tokenizer,
-        num_soft_prompt_tokens=model.config.num_soft_prompt_tokens,
+        num_prompt_tokens=model.config.num_prompt_tokens,
     )
     collator = HoCRSDataCollator(
         processor,
-        max_length=data_args.max_length,
+        task="recommendation",
         max_history_tokens=data_args.max_history_tokens,
-        max_response_tokens=data_args.max_response_tokens,
     )
     dataset_path = Path(data_args.dataset_path)
     table_path = Path(
@@ -190,6 +183,7 @@ def main() -> None:
     dataset_config = HoCRSDatasetConfig(
         dataset_path=data_args.dataset_path,
         hyperedge_table_path=data_args.hyperedge_table_path,
+        task="recommendation",
         views=tuple(data_args.views),
         topk=data_args.topk,
         khop=data_args.khop,

@@ -33,12 +33,13 @@ def test_metadata_matches_dataset_samples_with_and_without_history() -> None:
 
     rows = build_recommendation_metadata(conversations)
 
-    assert [row["target"] for row in rows] == [4, 8, 9]
+    assert [row["target"] for row in rows] == [4, 4, 4, 8, 9]
     assert rows[0]["history_item_ids"] == []
-    assert rows[1]["history_item_ids"] == [4]
-    assert rows[2]["history_item_ids"] == [4]
+    assert all(row["history_item_ids"] == [4] for row in rows[1:])
     assert [row["sample_id"] for row in rows] == [
         "dialog-1:10:0",
+        "dialog-1:11:0",
+        "dialog-1:11:1",
         "dialog-1:12:0",
         "dialog-1:12:1",
     ]

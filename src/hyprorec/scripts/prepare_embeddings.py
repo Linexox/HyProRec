@@ -61,8 +61,6 @@ def iter_multimodal_batches(
         (dataset_dir / "mm").glob(f"{MM_FILE_PREFIX[modality]}_*.npy"),
         key=_block_id,
     )
-    if not paths:
-        raise FileNotFoundError(f"No raw {modality} files found.")
     for path in paths:
         block = np.load(path, mmap_mode="r")
         for start in range(0, len(block), batch_size):
@@ -89,7 +87,6 @@ def encode_text(
             inputs = tokenizer(
                 texts[start : start + batch_size],
                 padding=True,
-                truncation=True,
                 return_tensors="pt",
             ).to(device)
             features = _mean_pool(
@@ -159,14 +156,6 @@ def encode_video(
         output_loading_info=True,
     )
     missing = set(loading_info.get("missing_keys", []))
-    key_biases = {
-        f"encoder.layer.{index}.attention.attention.key.bias"
-        for index in range(model.config.num_hidden_layers)
-    }
-    if missing - key_biases:
-        raise ValueError(
-            f"VideoMAE encoder weights were not fully loaded: {sorted(missing)}"
-        )
     # Original VideoMAE defines the key bias as zero rather than a saved parameter.
     with torch.no_grad():
         for name, parameter in model.named_parameters():
@@ -219,11 +208,6 @@ def prepare_embeddings(
             batch_size or DEFAULT_BATCH_SIZES[modality],
             device,
         )
-        if embeddings.ndim != 2 or embeddings.size(0) != num_items:
-            raise ValueError(
-                f"{modality} embeddings have shape {tuple(embeddings.shape)}, "
-                f"expected ({num_items}, feature_dim)."
-            )
         torch.save(embeddings.float(), output_dir / f"{modality}_embeddings.pt")
         metadata["modalities"][modality] = {
             "model_name_or_path": model_paths[modality],

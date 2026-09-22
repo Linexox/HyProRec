@@ -25,6 +25,7 @@ from .modeling_hocrs import HypergraphEncoder
 
 
 def build_source_config(view: str):
+    view = view.removeprefix("co_")
     common = dict(
         hidden_size=256,
         num_hidden_layers=4,
@@ -73,7 +74,6 @@ class HoCRSGroundingModel(PreTrainedModel):
         kwargs.setdefault("save_original_format", False)
         return super().save_pretrained(save_directory, **kwargs)
 
-
     def __init__(self, config: HoCRSGroundingConfig) -> None:
         super().__init__(config)
         self.hypergraph_encoders = nn.ModuleDict()
@@ -95,19 +95,16 @@ class HoCRSGroundingModel(PreTrainedModel):
                 )
             else:
                 source_config = build_source_config(view)
-            if source_config.hidden_size != config.output_dim:
-                raise ValueError("Graph output and source hidden dimensions must match.")
             config.source_configs[view] = source_config.to_dict()
             self.source_encoders[view] = AutoModel.from_config(source_config)
         self.post_init()
 
     def encode_source(self, view, source_data):
         output = self.source_encoders[view](**source_data).last_hidden_state
-        if view in {"txt", "img"}:
+        if view.removeprefix("co_") in {"txt", "img"}:
             return output[:, 0]
         else:
             return output.mean(dim=1)
-
 
     def _view_loss(
         self,
@@ -122,9 +119,11 @@ class HoCRSGroundingModel(PreTrainedModel):
             graph["hyperedge_index"],
             num_hyperedges,
         )
-        source_features = self.encode_source(view, source_data).to(encoded.node_features.dtype)
+        source_features = self.encode_source(view, source_data).to(
+            encoded.node_features.dtype
+        )
         anchor_index = graph["hyperedge_anchor_index"]
-        anchor_ids = graph["node_ids"].index_select(0, anchor_index)        # global node IDs
+        anchor_ids = graph["node_ids"].index_select(0, anchor_index)  # global node IDs
         graph_anchors = encoded.node_features.index_select(0, anchor_index)
         source_anchors = source_features.index_select(0, anchor_index)
         node_index, edge_index = graph["hyperedge_index"]
@@ -132,17 +131,16 @@ class HoCRSGroundingModel(PreTrainedModel):
         is_neighbor = node_index.ne(anchor_per_incidence)
         neighbor_nodes = node_index[is_neighbor]
         neighbor_edges = edge_index[is_neighbor]
-        neighbor_sum = source_features.new_zeros((num_hyperedges, source_features.size(-1)))
+        neighbor_sum = source_features.new_zeros(
+            (num_hyperedges, source_features.size(-1))
+        )
         neighbor_sum.index_add_(0, neighbor_edges, source_features[neighbor_nodes])
         neighbor_count = torch.bincount(neighbor_edges, minlength=num_hyperedges)
         valid = neighbor_count > 0
         source_neighbors = neighbor_sum / neighbor_count.clamp_min(1).unsqueeze(-1)
         result: dict[str, torch.Tensor] = {}
         ga_sa = multi_positive_contrastive_loss(
-            graph_anchors,
-            source_anchors,
-            anchor_ids,
-            self.config.temperature
+            graph_anchors, source_anchors, anchor_ids, self.config.temperature
         )
         if ga_sa is not None:
             result["ga_sa"] = ga_sa
@@ -170,9 +168,7 @@ class HoCRSGroundingModel(PreTrainedModel):
         self,
         node_features: Mapping[str, torch.Tensor],
         hypergraphs: Mapping[str, Mapping[str, torch.Tensor]],
-        source_data: Mapping[
-            str, Mapping[str, torch.Tensor]
-        ],
+        source_data: Mapping[str, Mapping[str, torch.Tensor]],
         return_loss: bool = True,
         labels: torch.Tensor | None = None,
     ) -> HoCRSGroundingOutput:

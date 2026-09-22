@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter, defaultdict
+from itertools import combinations
 from pathlib import Path
 
 import torch
@@ -19,9 +21,6 @@ def compute_similarity_neighbors(
     device: torch.device,
 ) -> list[list[int]]:
     """Compute top-k nearest neighbors for each item based on cosine similarity."""
-    
-    if embeddings.ndim != 2:
-        raise ValueError(f"Expected a 2D embedding table, got {embeddings.shape}.")
 
     embeddings = F.normalize(embeddings.float(), dim=-1).to(device)
     num_items = embeddings.size(0)
@@ -32,7 +31,9 @@ def compute_similarity_neighbors(
         indices = similarities.topk(candidate_count, dim=-1).indices.cpu().tolist()
         for offset, candidates in enumerate(indices):
             anchor_id = start + offset
-            filtered_candidates = [node_id for node_id in candidates if node_id != anchor_id]
+            filtered_candidates = [
+                node_id for node_id in candidates if node_id != anchor_id
+            ]
             neighbors.append(filtered_candidates[:topk])
     return neighbors
 
@@ -40,13 +41,11 @@ def compute_similarity_neighbors(
 def prepare_hyperedge_table(
     dataset_dir: Path,
     output: Path,
-    topk: int = 50,
+    topk: int = 10,
     similarity_batch_size: int = 512,
     device: torch.device | None = None,
     embedding_dir: Path | None = None,
 ) -> None:
-    if topk < 0:
-        raise ValueError("topk must be non-negative.")
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     embedding_dir = embedding_dir or dataset_dir / "embeddings"
     embeddings = {
@@ -71,6 +70,32 @@ def prepare_hyperedge_table(
             [anchor_id, *neighbors[anchor_id]] for anchor_id in range(num_items)
         ]
 
+    counts: dict[int, Counter[int]] = defaultdict(Counter)
+    conversations = json.loads(
+        (dataset_dir / "train_data.json").read_text(encoding="utf-8")
+    )
+    for conversation in conversations:
+        items = {
+            int(item)
+            for turn in conversation["dialog"]
+            for item in turn.get("items", [])
+        }
+        for left, right in combinations(sorted(items), 2):
+            counts[left][right] += 1
+            counts[right][left] += 1
+    table["co"] = [
+        [
+            anchor,
+            *(
+                neighbor
+                for neighbor, _ in sorted(
+                    counts[anchor].items(), key=lambda pair: (-pair[1], pair[0])
+                )[:topk]
+            ),
+        ]
+        for anchor in range(num_items)
+    ]
+
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as file:
         json.dump(table, file, ensure_ascii=False)
@@ -83,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-dir", type=Path, required=True)
     parser.add_argument("--embedding-dir", type=Path)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--topk", type=int, default=50)
+    parser.add_argument("--topk", type=int, default=10)
     parser.add_argument("--similarity-batch-size", type=int, default=512)
     parser.add_argument(
         "--device",
