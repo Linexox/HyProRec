@@ -54,9 +54,7 @@ def parse_experiment_args(
         valid_fields = {field.name for field in fields(dataclass_type) if field.init}
         unknown_fields = set(section) - valid_fields
         if unknown_fields:
-            raise ValueError(
-                f"Unknown fields in '{section_name}': {sorted(unknown_fields)}"
-            )
+            raise ValueError(f"Unknown fields in '{section_name}': {sorted(unknown_fields)}")
         overlap = set(defaults) & set(section)
         if overlap:
             raise ValueError(f"Config fields have multiple owners: {sorted(overlap)}")

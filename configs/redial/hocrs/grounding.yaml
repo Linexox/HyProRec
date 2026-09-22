@@ -11,20 +11,20 @@ model:
   grounding_temperature: 0.07
 
 data:
-  dataset_path: data/lhf-redial
+  dataset_path: data/hocrs2_redial
   hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
   embeddings_dir_name: embeddings
-  views: [txt, img, ado, vdo]
+  views: [txt, img, ado, vdo, co]
   topk: 3
   khop: 2
 
 training:
-  output_dir: outputs/redial/hocrs/grounding-wo-co-hyprorec
+  output_dir: outputs/redial/hocrs/grounding-eight-towers
   do_train: true
   do_eval: true
   per_device_train_batch_size: 8
   per_device_eval_batch_size: 8
-  num_train_epochs: 5
+  num_train_epochs: 20
   learning_rate: 0.0001
   weight_decay: 0.01
   lr_scheduler_type: constant
@@ -43,4 +43,4 @@ training:
   save_total_limit: 2
   remove_unused_columns: false
   report_to: wandb
-  run_name: hocrs-grounding-wo-co
+  run_name: hocrs-grounding-eight-towers

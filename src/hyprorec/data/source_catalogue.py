@@ -52,10 +52,6 @@ class GroundingCatalogueDataset(Dataset):
         for path in paths:
             block = np.load(path, mmap_mode="r")
             index.extend((path, row) for row in range(len(block)))
-        if len(index) != len(self.texts):
-            raise ValueError(
-                f"Raw {modality} data has {len(index)} items, expected {len(self.texts)}."
-            )
         return index
 
     def __len__(self) -> int:

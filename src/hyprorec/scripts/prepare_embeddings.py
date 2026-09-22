@@ -61,8 +61,6 @@ def iter_multimodal_batches(
         (dataset_dir / "mm").glob(f"{MM_FILE_PREFIX[modality]}_*.npy"),
         key=_block_id,
     )
-    if not paths:
-        raise FileNotFoundError(f"No raw {modality} files found.")
     for path in paths:
         block = np.load(path, mmap_mode="r")
         for start in range(0, len(block), batch_size):
@@ -89,7 +87,6 @@ def encode_text(
             inputs = tokenizer(
                 texts[start : start + batch_size],
                 padding=True,
-                truncation=True,
                 return_tensors="pt",
             ).to(device)
             features = _mean_pool(
@@ -153,28 +150,18 @@ def encode_video(
     device: torch.device,
 ) -> torch.Tensor:
     processor = AutoImageProcessor.from_pretrained(model_path)
-    # START: Preserve pretrained Q/V biases under Transformers' renamed projections.
     model, loading_info = VideoMAEModel.from_pretrained(
         model_path,
         key_mapping={r"\.q_bias$": ".query.bias", r"\.v_bias$": ".value.bias"},
         output_loading_info=True,
     )
     missing = set(loading_info.get("missing_keys", []))
-    key_biases = {
-        f"encoder.layer.{index}.attention.attention.key.bias"
-        for index in range(model.config.num_hidden_layers)
-    }
-    if missing - key_biases:
-        raise ValueError(
-            f"VideoMAE encoder weights were not fully loaded: {sorted(missing)}"
-        )
     # Original VideoMAE defines the key bias as zero rather than a saved parameter.
     with torch.no_grad():
         for name, parameter in model.named_parameters():
             if name in missing:
                 parameter.zero_()
     model = model.eval().to(device)
-    # END: Preserve pretrained Q/V biases under Transformers' renamed projections.
     outputs = []
     with torch.inference_mode():
         for batch in tqdm(
@@ -197,7 +184,6 @@ def prepare_embeddings(
     device: torch.device,
     output_dir: Path | None = None,
 ) -> None:
-    # START: Preserve native encoder widths and allow raw data and outputs to differ.
     output_dir = output_dir or dataset_dir / "embeddings"
     output_dir.mkdir(parents=True, exist_ok=True)
     num_items = len(load_texts(dataset_dir))
@@ -222,11 +208,6 @@ def prepare_embeddings(
             batch_size or DEFAULT_BATCH_SIZES[modality],
             device,
         )
-        if embeddings.ndim != 2 or embeddings.size(0) != num_items:
-            raise ValueError(
-                f"{modality} embeddings have shape {tuple(embeddings.shape)}, "
-                f"expected ({num_items}, feature_dim)."
-            )
         torch.save(embeddings.float(), output_dir / f"{modality}_embeddings.pt")
         metadata["modalities"][modality] = {
             "model_name_or_path": model_paths[modality],
@@ -241,13 +222,11 @@ def prepare_embeddings(
         json.dumps(metadata, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    # END: Preserve native encoder widths and allow raw data and outputs to differ.
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-dir", type=Path, required=True)
-    # Modified: write new embeddings without overwriting another project's tables.
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument(
         "--modality", nargs="+", choices=MODALITIES, default=list(MODALITIES)

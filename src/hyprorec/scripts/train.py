@@ -1,14 +1,15 @@
-"""Train or evaluate HoCRS with the Transformers Trainer."""
+"""Train one independent HyProRec task per invocation."""
 
 from __future__ import annotations
 
 import json
+from copy import copy
 from dataclasses import asdict
 from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, Trainer, set_seed  # Modified: seed before constructing modules.
+from transformers import AutoTokenizer, Trainer, TrainerCallback, set_seed
 from transformers.trainer_utils import get_last_checkpoint
 
 from ..arguments import DataArguments, ModelArguments
@@ -18,143 +19,119 @@ from ..constants import MODALITIES
 from ..data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
 from ..data.hypergraph import HypergraphTable
 from ..metrics import build_compute_metrics, preprocess_logits_for_metrics
-from ..modeling_hocrs import HoCRSModel, load_backbone  # Modified: support Omni Thinker.
+from ..modeling_hocrs import (
+    HoCRSConversationModel,
+    HoCRSRecommendationModel,
+    load_backbone,
+)
 from ..processing_hocrs import HoCRSProcessor
 
 
-def _load_modality_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
-    dataset_path = Path(data_args.dataset_path)
-    embedding_path = dataset_path / data_args.embeddings_dir_name
-    tables = {
-        modality: torch.load(
-            embedding_path / f"{modality}_embeddings.pt",
-            map_location="cpu",
-            weights_only=True,
+def _load_modality_tables(
+    data_args: DataArguments, model_args: ModelArguments
+) -> dict[str, torch.Tensor]:
+    graph_views = {view for view in data_args.views if view in MODALITIES}
+    if "co" in data_args.views:
+        graph_views.add(model_args.co_feature_view)
+    item_views = (
+        set(MODALITIES)
+        if model_args.item_table_view == "full"
+        else {model_args.item_table_view}
+    )
+    needed = graph_views | (
+        item_views
+        if model_args.task == "recommendation"
+        and model_args.recommendation_head == "item_table"
+        else set()
+    )
+    directory = Path(data_args.dataset_path) / data_args.embeddings_dir_name
+    return {
+        view: torch.load(
+            directory / f"{view}_embeddings.pt", map_location="cpu", weights_only=True
         ).float()
-        for modality in data_args.views
-        if modality in MODALITIES
+        for view in MODALITIES
+        if view in needed
     }
-    if any(table.ndim != 2 for table in tables.values()):
-        raise ValueError("Every modality embedding table must be two-dimensional.")
-    return tables
-
-
-def _load_content_table(data_args: DataArguments) -> torch.Tensor:
-    table = torch.load(
-        data_args.content_table_path,
-        map_location="cpu",
-        weights_only=True,
-    ).float()
-    if table.ndim != 2:
-        raise ValueError("The content initialization table must be two-dimensional.")
-    return table
 
 
 def _build_model(
     model_args: ModelArguments,
     data_args: DataArguments,
     processor: HoCRSProcessor,
-    modality_tables: dict[str, torch.Tensor],
-    content_table: torch.Tensor,
-) -> HoCRSModel:
-    backbone = load_backbone(model_args.backbone_name_or_path)  # Modified: select Thinker for Omni.
+    tables: dict[str, torch.Tensor],
+):
+    backbone = load_backbone(model_args.backbone_name_or_path)
     backbone.resize_token_embeddings(len(processor.tokenizer))
-
-    token_ids = processor.get_token_id_map()
-    num_items, item_dim = content_table.shape
-    if any(table.size(0) != num_items for table in modality_tables.values()):
-        raise ValueError("Content and modality tables contain different item counts.")
-    view_input_dims = {
-        **{view: table.size(1) for view, table in modality_tables.items()},
-        **({"co": item_dim} if "co" in data_args.views else {}),
-    }
-    graph_configs = {
-        view: HoCRSHypergraphConfig(
-            input_dim=view_input_dims[view],
+    num_items = next(iter(tables.values())).size(0)
+    graph_configs = {}
+    for view in data_args.views:
+        feature_view = model_args.co_feature_view if view == "co" else view
+        graph_configs[view] = HoCRSHypergraphConfig(
+            input_dim=tables[feature_view].size(1),
             hidden_dim=model_args.hypergraph_hidden_dim,
             output_dim=model_args.hypergraph_output_dim,
             num_layers=model_args.hypergraph_num_layers,
             dropout=model_args.hypergraph_dropout,
         )
-        for view in data_args.views
-    }
     config = HoCRSConfig(
         backbone_config=backbone.config,
+        task=model_args.task,
+        recommendation_head=model_args.recommendation_head,
         views=data_args.views,
+        co_feature_view=model_args.co_feature_view,
         num_items=num_items,
-        item_dim=(                                                          # ***** FIXME *****
-            model_args.recommendation_hidden_dim
-            if model_args.item_table_init == "random"
-            else item_dim
-        ),
-        use_hypergraph_encoder=model_args.use_hypergraph_encoder,
+        item_feature_dims={view: table.size(1) for view, table in tables.items()},
+        item_table_view=model_args.item_table_view,
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
-        item_table_init=model_args.item_table_init,
-        train_item_table=model_args.train_item_table,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
-        recommendation_dropout=model_args.recommendation_dropout,
         recommendation_temperature=model_args.recommendation_temperature,
-        use_moe=model_args.use_moe,
-        moe_num_experts=model_args.moe_num_experts,
-        moe_hidden_dim=model_args.moe_hidden_dim,
-        moe_router_temperature=model_args.moe_router_temperature,
-        moe_residual_scale_init=model_args.moe_residual_scale_init,
-        beta=model_args.beta,
-        num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
+        num_prompt_tokens=model_args.num_prompt_tokens,
         freeze_backbone=model_args.freeze_backbone,
-        train_special_tokens=model_args.train_special_tokens,
-        co_hypergraph_config=graph_configs.get("co"),
-        txt_hypergraph_config=graph_configs.get("txt"),
-        img_hypergraph_config=graph_configs.get("img"),
-        ado_hypergraph_config=graph_configs.get("ado"),
-        vdo_hypergraph_config=graph_configs.get("vdo"),
-        **token_ids,
+        prompt_token_id=processor.get_token_id_map()["soft_prompt_token_id"],
+        **{f"{view}_hypergraph_config": value for view, value in graph_configs.items()},
     )
-    model = HoCRSModel(config, backbone=backbone)
+    model_class = (
+        HoCRSRecommendationModel
+        if model_args.task == "recommendation"
+        else HoCRSConversationModel
+    )
+    model = model_class(config, backbone=backbone)
     if model_args.grounding_checkpoint_path:
         model.load_grounding_checkpoint(model_args.grounding_checkpoint_path)
-    feature_tables = dict(modality_tables)
-    if "co" in data_args.views:
-        feature_tables["co"] = content_table
-    model.initialize_feature_tables(
-        feature_tables,
-        item_table_init=(
-            content_table if model_args.item_table_init == "aligned_content" else None
-        ),
-    )
+    model.initialize_feature_tables(tables)
     return model
 
 
-def _resolve_resume_checkpoint(training_args) -> str | None:
-    if training_args.resume_from_checkpoint:
-        return training_args.resume_from_checkpoint
-    output_dir = Path(training_args.output_dir)
-    if not output_dir.is_dir():
-        return None
-    return get_last_checkpoint(str(output_dir))
+class TestEvaluationCallback(TrainerCallback):
+    def __init__(self, dataset):
+        self.dataset = dataset
+        self.trainer = None
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        previous = copy(control)
+        metrics = self.trainer.evaluate(eval_dataset=self.dataset, metric_key_prefix="test")
+        if self.trainer.is_world_process_zero():
+            self.trainer.save_metrics("test", metrics)
+        return previous
 
 
-def _save_experiment_provenance(
-    output_dir: str,
-    config_path: Path,
-    model_args: ModelArguments,
-    data_args: DataArguments,
-    training_args,
-) -> None:
+def _save_provenance(output_dir, config_path, model_args, data_args, training_args):
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
-    suffix = config_path.suffix.lower()
-    (destination / f"source_experiment_config{suffix}").write_text(
-        config_path.read_text(encoding="utf-8"),
-        encoding="utf-8",
+    (destination / f"source_experiment_config{config_path.suffix}").write_text(
+        config_path.read_text(encoding="utf-8"), encoding="utf-8"
     )
-    resolved = {
-        "model": asdict(model_args),
-        "data": asdict(data_args),
-        "training": training_args.to_dict(),
-    }
     (destination / "resolved_experiment_config.json").write_text(
-        json.dumps(resolved, ensure_ascii=False, indent=2, default=str),
+        json.dumps(
+            {
+                "model": asdict(model_args),
+                "data": asdict(data_args),
+                "training": training_args.to_dict(),
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
         encoding="utf-8",
     )
 
@@ -162,88 +139,89 @@ def _save_experiment_provenance(
 def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
-    set_seed(training_args.seed)  # Modified: cover all newly initialized parameters.
-
+    set_seed(training_args.seed)
     tokenizer = AutoTokenizer.from_pretrained(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(
         tokenizer=tokenizer,
-        num_soft_prompt_tokens=model_args.num_soft_prompt_tokens,
+        num_prompt_tokens=model_args.num_prompt_tokens
     )
-    # START: Load prepared features without performing online fusion.
-    modality_tables = _load_modality_tables(data_args)
-    content_table = _load_content_table(data_args)
-    model = _build_model(
-        model_args,
-        data_args,
-        processor,
-        modality_tables,
-        content_table,
-    )
-    # END: Load prepared features without performing online fusion.
-
-    dataset_config = HoCRSDatasetConfig(
+    tables = _load_modality_tables(data_args, model_args)
+    model = _build_model(model_args, data_args, processor, tables)
+    table_path = data_args.hyperedge_table_path or str(Path(data_args.dataset_path) / "hyperedge_table.json")
+    hypergraph_table = HypergraphTable.from_json(table_path)
+    train_config = HoCRSDatasetConfig(
         dataset_path=data_args.dataset_path,
-        hyperedge_table_path=data_args.hyperedge_table_path,
+        task=model_args.task,
+        hyperedge_table_path=table_path,
+        views=tuple(data_args.views),
+        topk=data_args.topk,
+        khop=data_args.khop,
+        sampling=data_args.hyperedge_sampling,
+        sample_repeat=data_args.sample_repeat,
+    )
+    eval_config = HoCRSDatasetConfig(
+        dataset_path=data_args.dataset_path,
+        task=model_args.task,
+        hyperedge_table_path=table_path,
         views=tuple(data_args.views),
         topk=data_args.topk,
         khop=data_args.khop,
     )
-    hypergraph_table = None
-    if data_args.views:
-        table_path = dataset_config.hyperedge_table_path or (
-            Path(dataset_config.dataset_path) / "hyperedge_table.json"
-        )
-        hypergraph_table = HypergraphTable.from_json(table_path)
-        if hypergraph_table.num_items != model.config.num_items:
-            raise ValueError(
-                "The hypergraph table and modality embeddings contain different item counts: "
-                f"{hypergraph_table.num_items} and {model.config.num_items}."
-            )
-
-    train_dataset = HoCRSDataset(dataset_config, "train", hypergraph_table) if training_args.do_train else None
-    eval_dataset = HoCRSDataset(dataset_config, "validation", hypergraph_table) if training_args.do_eval else None
-    test_dataset = HoCRSDataset(dataset_config, "test", hypergraph_table) if training_args.do_predict else None
-
+    train_dataset = (
+        HoCRSDataset(train_config, "train", hypergraph_table)
+        if training_args.do_train
+        else None
+    )
+    eval_dataset = (
+        HoCRSDataset(eval_config, "validation", hypergraph_table)
+        if training_args.do_eval
+        else None
+    )
+    test_dataset = (
+        HoCRSDataset(eval_config, "test", hypergraph_table)
+        if training_args.do_train or training_args.do_predict
+        else None
+    )
+    training_args.label_names = (
+        ["rec_labels"] if model_args.task == "recommendation" else ["labels"]
+    )
+    callback = (
+        TestEvaluationCallback(test_dataset) if test_dataset is not None else None
+    )
     trainer = Trainer(
         model=model,
         args=training_args,
         data_collator=HoCRSDataCollator(
             processor,
-            max_length=data_args.max_length,
-            max_history_tokens=data_args.max_history_tokens,
-            max_response_tokens=data_args.max_response_tokens,
+            model_args.task,
+            data_args.max_history_tokens
         ),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=processor,
-        compute_metrics=build_compute_metrics(processor),
-        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+        compute_metrics=build_compute_metrics(processor, model_args.task),
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics(model_args.task),
+        callbacks=[callback] if callback else None,
     )
-
+    if callback:
+        callback.trainer = trainer
     if trainer.is_world_process_zero():
         processor.save_pretrained(training_args.output_dir)
-        _save_experiment_provenance(
-            training_args.output_dir,
-            config_path,
-            model_args,
-            data_args,
-            training_args,
+        _save_provenance(
+            training_args.output_dir, config_path, model_args, data_args, training_args
         )
-
     if training_args.do_train:
-        train_result = trainer.train(resume_from_checkpoint=_resolve_resume_checkpoint(training_args))
+        checkpoint = training_args.resume_from_checkpoint
+        if checkpoint is None and Path(training_args.output_dir).is_dir():
+            checkpoint = get_last_checkpoint(training_args.output_dir)
+        result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()
         trainer.save_state()
-        trainer.log_metrics("train", train_result.metrics)
-        trainer.save_metrics("train", train_result.metrics)
-    if training_args.do_eval:
-        metrics = trainer.evaluate(metric_key_prefix="eval")
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
+        trainer.save_metrics("train", result.metrics)
+    if eval_dataset is not None:
+        trainer.save_metrics("eval", trainer.evaluate(metric_key_prefix="eval"))
     if test_dataset is not None:
-        prediction = trainer.predict(test_dataset, metric_key_prefix="test")
-        trainer.log_metrics("test", prediction.metrics)
-        trainer.save_metrics("test", prediction.metrics)
+        trainer.save_metrics("test", trainer.predict(test_dataset, metric_key_prefix="test").metrics)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,6 @@ from .hypergraph import HypergraphTable
 from .source_catalogue import GroundingCatalogueDataset
 
 
-# START: Reuse memory-mapped raw blocks, with HoCRS2's title-only text supervision.
 class GroundingSourceDataset(GroundingCatalogueDataset):
     def __init__(self, dataset_path, views):
         super().__init__(dataset_path, views)
@@ -24,9 +23,6 @@ class GroundingSourceDataset(GroundingCatalogueDataset):
             encoding="utf-8-sig", newline=""
         ) as file:
             self.texts = [row["movieName"] for row in csv.DictReader(file)]
-
-
-# END: Reuse memory-mapped raw blocks, with HoCRS2's title-only text supervision.
 
 
 class HoCRSGroundingDataset(Dataset):
@@ -53,7 +49,10 @@ class HoCRSGroundingDataset(Dataset):
             "item_id": item_id,
             "hypergraphs": {
                 view: self.hypergraph_table.build_local(
-                    [item_id], view, self.topk, self.khop
+                    [item_id],
+                    "co" if view.startswith("co_") else view,
+                    self.topk,
+                    self.khop,
                 )
                 for view in self.views
             },
@@ -70,48 +69,45 @@ class HoCRSGroundingCollator:
     ) -> None:
         self.feature_tables = feature_tables
         self.views = tuple(views)
-        self.source_dataset = (
-            source_dataset  # Modified: raw source features never come from embeddings.
-        )
+        self.source_dataset = source_dataset
         if tokenizer is not None:
-            self.tokenizer = tokenizer  # Modified: only text batches own a tokenizer.
+            self.tokenizer = tokenizer
 
     def __call__(self, samples: Sequence[dict[str, Any]]) -> BatchData:
         hypergraphs: dict[str, HypergraphBatch] = {}
         node_features: dict[str, torch.Tensor] = {}
-        source_data = {}  # Modified: separate graph inputs and raw supervision.
+        source_data = {}
         for view in self.views:
             graphs = [sample["hypergraphs"][view] for sample in samples]
             batch = batch_hypergraphs(graphs)
             hypergraphs[view] = batch
-            node_features[view] = self.feature_tables[view].index_select(
+            source_view = view.removeprefix("co_")
+            node_features[view] = self.feature_tables[source_view].index_select(
                 0, batch["node_ids"]
             )
-            # START: Preserve graph node order and HoCRS2's raw-input scaling.
             values = [
-                self.source_dataset[node_id][view]
+                self.source_dataset[node_id][source_view]
                 for node_id in batch["node_ids"].tolist()
             ]
-            if view == "txt":
+            if source_view == "txt":
                 source_data[view] = dict(
                     self.tokenizer(
                         values,
                         padding=True,
-                        truncation=True,
-                        max_length=32,
                         return_tensors="pt",
                     )
                 )
             else:
                 values = torch.from_numpy(np.stack(values)).float()
-                key = "input_values" if view == "ado" else "pixel_values"
-                source_data[view] = {key: values / (128.0 if view == "ado" else 255.0)}
-            # END: Preserve graph node order and HoCRS2's raw-input scaling.
+                key = "input_values" if source_view == "ado" else "pixel_values"
+                source_data[view] = {
+                    key: values / (128.0 if source_view == "ado" else 255.0)
+                }
         return BatchData(
             {
                 "node_features": node_features,
                 "hypergraphs": hypergraphs,
-                "source_data": source_data,  # Modified: independent raw source branch.
+                "source_data": source_data,
                 "return_loss": True,
             }
         )
