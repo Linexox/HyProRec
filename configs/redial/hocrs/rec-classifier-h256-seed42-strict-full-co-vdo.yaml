@@ -23,7 +23,7 @@ data:
   sample_repeat: 1
   max_history_tokens: 256
 training:
-  output_dir: outputs/redial/hocrs/rec-classifier-woco-h256-seed42-strict-co-vdo
+  output_dir: outputs/redial/hocrs/rec-classifier-h256-seed42-strict-full-co-vdo
   do_train: true
   do_eval: true
   do_predict: true

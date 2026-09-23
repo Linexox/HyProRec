@@ -30,8 +30,8 @@ do
 done
 
 for view in "${VIEWS[@]}"; do
-  config="configs/redial/hocrs/rec-classifier-woco-h256-seed42-strict-co-${view}.yaml"
-  output_dir="outputs/redial/hocrs/rec-classifier-woco-h256-seed42-strict-co-${view}"
+  config="configs/redial/hocrs/rec-classifier-h256-seed42-strict-full-co-${view}.yaml"
+  output_dir="outputs/redial/hocrs/rec-classifier-h256-seed42-strict-full-co-${view}"
   if [[ ! -f "$config" ]]; then
     echo "Config is missing: $config" >&2
     exit 1
@@ -46,7 +46,7 @@ mkdir -p "$LOG_DIR"
 python -m compileall -q src
 
 for view in "${VIEWS[@]}"; do
-  config="configs/redial/hocrs/rec-classifier-woco-h256-seed42-strict-co-${view}.yaml"
+  config="configs/redial/hocrs/rec-classifier-h256-seed42-strict-full-co-${view}.yaml"
   export WANDB_TAGS="HyProRec-ReDial,Rec-Classifier,h256,rec,seed42,strict,co-${view}"
   echo "START CRS co-${view} $(date -Is)"
   "$TORCHRUN" --standalone --nproc-per-node=8 -m hyprorec.scripts.train \
