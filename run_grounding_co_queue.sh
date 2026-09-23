@@ -13,14 +13,14 @@ export PYTHONPATH=$PWD/src
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_PROJECT=HyProRec-Luna
 export WANDB_ENTITY=linexox7-sun-yat-sen-university
-export WANDB_TAGS=grounding,HyProRec-ReDial
+export WANDB_TAGS=grounding,HyProRec-ReDial,full
 export TMPDIR=/data2/lhf/tmp/hyprorec-grounding-hyprorec-redial
 
-CONFIG=configs/redial/hocrs/grounding-hyprorec-redial-co.yaml
-CO_OUTPUT=outputs/redial/hocrs/grounding-hyprorec-redial/co-training
+CONFIG=configs/redial/hocrs/grounding-hyprorec-redial-full-co.yaml
+CO_OUTPUT=outputs/redial/hocrs/grounding-hyprorec-redial/full-co-training
 BASE_CHECKPOINT=outputs/redial/hocrs/grounding-eight-towers
-FINAL_CHECKPOINT=outputs/redial/hocrs/grounding-hyprorec-redial
-LOG_FILE=logs/grounding-hyprorec-redial/co-training.log
+FINAL_CHECKPOINT=outputs/redial/hocrs/grounding-hyprorec-redial/full
+LOG_FILE=logs/grounding-hyprorec-redial/full-co-training.log
 
 for required_file in \
   "$BASE_CHECKPOINT/model.safetensors" \
@@ -34,15 +34,18 @@ do
   fi
 done
 
-if [[ -e "$FINAL_CHECKPOINT" || -f "$LOG_FILE" ]]; then
+if [[ -e "$CO_OUTPUT" || -e "$FINAL_CHECKPOINT" || -f "$LOG_FILE" ]]; then
   RUN_ARCHIVE="outputs/redial/hocrs/grounding-hyprorec-redial-reruns/$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$RUN_ARCHIVE"
+  if [[ -e "$CO_OUTPUT" ]]; then
+    mv "$CO_OUTPUT" "$RUN_ARCHIVE/full-co-training"
+  fi
   if [[ -e "$FINAL_CHECKPOINT" ]]; then
-    mv "$FINAL_CHECKPOINT" "$RUN_ARCHIVE/previous-checkpoints"
+    mv "$FINAL_CHECKPOINT" "$RUN_ARCHIVE/full-checkpoint"
   fi
   if [[ -f "$LOG_FILE" ]]; then
     mkdir -p "$RUN_ARCHIVE/logs"
-    mv "$LOG_FILE" "$RUN_ARCHIVE/logs/co-training.log"
+    mv "$LOG_FILE" "$RUN_ARCHIVE/logs/full-co-training.log"
   fi
   echo "Archived previous partial run to $RUN_ARCHIVE"
 fi
@@ -50,7 +53,7 @@ fi
 mkdir -p "$TMPDIR" logs/grounding-hyprorec-redial
 python -m compileall -q src
 
-echo "START HyProRec-ReDial co towers $(date -Is)"
+echo "START HyProRec-ReDial full co towers $(date -Is)"
 torchrun --standalone --nproc-per-node=8 -m hyprorec.scripts.grounding \
   --config "$CONFIG" \
   > "$LOG_FILE" 2>&1
