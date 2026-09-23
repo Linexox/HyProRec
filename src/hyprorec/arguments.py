@@ -54,6 +54,7 @@ class DataArguments:
     hyperedge_table_path: str | None = None
     embeddings_dir_name: str = "embeddings"
     views: list[str] = field(default_factory=lambda: list(ALL_GRAPH_VIEWS))
+    grounding_views: list[str] | None = None
     topk: int = 3
     khop: int = 2
     hyperedge_sampling: str = "strict"
@@ -64,6 +65,18 @@ class DataArguments:
         self.views = list(dict.fromkeys(self.views))
         if set(self.views) - set(ALL_GRAPH_VIEWS):
             raise ValueError(f"Unknown or duplicated graph views: {self.views}")
+        if self.grounding_views is not None:
+            allowed_grounding_views = set(MODALITIES) | {
+                f"co_{view}" for view in MODALITIES
+            }
+            if (
+                not self.grounding_views
+                or len(set(self.grounding_views)) != len(self.grounding_views)
+                or set(self.grounding_views) - allowed_grounding_views
+            ):
+                raise ValueError(
+                    "grounding_views must contain unique modality or co-modality views."
+                )
         if not 0 <= self.topk <= 10:
             raise ValueError("topk must be between 0 and 10.")
         if self.hyperedge_sampling not in {"strict", "random"}:

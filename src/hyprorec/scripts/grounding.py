@@ -58,7 +58,10 @@ def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
     set_seed(training_args.seed)
-    views = (*MODALITIES, *(f"co_{view}" for view in MODALITIES))
+    views = tuple(
+        data_args.grounding_views
+        or (*MODALITIES, *(f"co_{view}" for view in MODALITIES))
+    )
     feature_tables = _load_feature_tables(data_args)
     input_dims = {
         view: feature_tables[view.removeprefix("co_")].size(1) for view in views
