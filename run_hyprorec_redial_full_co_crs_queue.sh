@@ -16,7 +16,7 @@ CHECKPOINT=outputs/redial/hocrs/grounding-hyprorec-redial/merged
 DATASET=data/ucrs_redial_hyprorec
 LOG_DIR=logs/crs-hyprorec-redial-full-co
 TORCHRUN=/data2/lhf/HoCRS-v3/.venv/bin/torchrun
-VIEWS=(txt img vdo ado)
+VIEWS=(img vdo ado)
 
 for required_file in \
   "$CHECKPOINT/model.safetensors" \
@@ -37,8 +37,10 @@ for view in "${VIEWS[@]}"; do
     exit 1
   fi
   if [[ -e "$output_dir" ]]; then
-    echo "Output already exists; refusing to resume or overwrite: $output_dir" >&2
-    exit 1
+    if ! compgen -G "$output_dir/checkpoint-*" > /dev/null; then
+      echo "Output exists without a resumable checkpoint: $output_dir" >&2
+      exit 1
+    fi
   fi
 done
 
@@ -48,9 +50,14 @@ python -m compileall -q src
 for view in "${VIEWS[@]}"; do
   config="configs/redial/hocrs/rec-classifier-h256-seed42-strict-full-co-${view}.yaml"
   export WANDB_TAGS="HyProRec-ReDial,Rec-Classifier,full,h256,rec,seed42,strict,co-${view}"
+  output_dir="outputs/redial/hocrs/rec-classifier-h256-seed42-strict-full-co-${view}"
+  log_file="$LOG_DIR/co-${view}.log"
+  if [[ -e "$output_dir" && -f "$log_file" ]]; then
+    mv "$log_file" "$LOG_DIR/co-${view}-pre-resume-$(date +%Y%m%d-%H%M%S).log"
+  fi
   echo "START CRS co-${view} $(date -Is)"
   "$TORCHRUN" --standalone --nproc-per-node=8 -m hyprorec.scripts.train \
     --config "$config" \
-    > "$LOG_DIR/co-${view}.log" 2>&1
+    > "$log_file" 2>&1
   echo "DONE CRS co-${view} $(date -Is)"
 done
