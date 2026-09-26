@@ -68,7 +68,7 @@ class DataArguments:
         if self.grounding_views is not None:
             allowed_grounding_views = set(MODALITIES) | {
                 f"co_{view}" for view in MODALITIES
-            }
+            } | {"co"}
             if (
                 not self.grounding_views
                 or len(set(self.grounding_views)) != len(self.grounding_views)

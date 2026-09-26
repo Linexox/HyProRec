@@ -25,12 +25,14 @@ class HoCRSGroundingConfig(PretrainedConfig):
         lambda_ga_sn: float = 3.0,
         lambda_sa_sn: float = 3.0,
         source_configs: dict[str, dict[str, Any]] | None = None,
+        num_items: int = 6924,
+        id_embedding_dim: int = 768,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.views = tuple(dict.fromkeys(views))
         if not set(self.views).issubset(
-            (*MODALITIES, *(f"co_{view}" for view in MODALITIES))
+            (*MODALITIES, "co", *(f"co_{view}" for view in MODALITIES))
         ):
             raise ValueError(
                 "Grounding views must be semantic modalities or modality-initialized co views."
@@ -45,6 +47,8 @@ class HoCRSGroundingConfig(PretrainedConfig):
         self.lambda_ga_sn = lambda_ga_sn
         self.lambda_sa_sn = lambda_sa_sn
         self.source_configs = dict(source_configs or {})
+        self.num_items = int(num_items)
+        self.id_embedding_dim = int(id_embedding_dim)
 
 
 __all__ = ["HoCRSGroundingConfig"]

@@ -81,7 +81,13 @@ class HoCRSGroundingCollator:
             graphs = [sample["hypergraphs"][view] for sample in samples]
             batch = batch_hypergraphs(graphs)
             hypergraphs[view] = batch
+            is_id_view = view == "co"
             source_view = view.removeprefix("co_")
+            if is_id_view:
+                # The Grounding model owns this trainable table.  Keep global
+                # item IDs as integer input so its embedding receives gradients.
+                node_features[view] = batch["node_ids"]
+                continue
             node_features[view] = self.feature_tables[source_view].index_select(
                 0, batch["node_ids"]
             )

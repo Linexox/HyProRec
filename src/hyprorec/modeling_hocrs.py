@@ -23,17 +23,13 @@ def load_backbone(name_or_path: str) -> nn.Module:
     config = AutoConfig.from_pretrained(name_or_path)
     if config.model_type in {"qwen2_5_omni", "qwen2_5_omni_thinker"}:
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
-
-        return Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
-            name_or_path, dtype="auto"
-        )
+        return Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(name_or_path, dtype="auto")
     return AutoModelForCausalLM.from_pretrained(name_or_path)
 
 
 def _backbone_from_config(config) -> nn.Module:
     if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
-
         return Qwen2_5OmniThinkerForConditionalGeneration(config)
     return AutoModelForCausalLM.from_config(config)
 
@@ -183,16 +179,12 @@ class ItemTableHead(nn.Module):
         )
 
     def item_embeddings(self, features: Mapping[str, torch.Tensor]) -> torch.Tensor:
-        projected = torch.stack(
-            [self.projects[name](features[name]) for name in self.names], dim=1
-        )
+        projected = torch.stack([self.projects[name](features[name]) for name in self.names], dim=1)
         if self.fuse is not None:
             projected = self.fuse(projected, projected, projected, need_weights=False)[0]
         return F.normalize(projected.mean(dim=1), dim=-1)
 
-    def forward(
-        self, pooled: torch.Tensor, features: Mapping[str, torch.Tensor]
-    ) -> torch.Tensor:
+    def forward(self, pooled: torch.Tensor, features: Mapping[str, torch.Tensor]) -> torch.Tensor:
         return (
             F.normalize(self.query(pooled), dim=-1)
             @ self.item_embeddings(features).t()
@@ -366,6 +358,10 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         )
         if self.config.backbone_config.model_type == "qwen2_5_omni_thinker":
             kwargs["input_ids"] = input_ids
+        
+        # embeds = embeds[..., :1024, :]
+        # if attention_mask is not None:
+        #     attention_mask = attention_mask[:, :1024]
         return self.backbone(
             inputs_embeds=embeds,
             attention_mask=attention_mask,

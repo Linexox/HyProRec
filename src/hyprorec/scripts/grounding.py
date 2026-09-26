@@ -63,8 +63,13 @@ def main() -> None:
         or (*MODALITIES, *(f"co_{view}" for view in MODALITIES))
     )
     feature_tables = _load_feature_tables(data_args)
+    table_path = data_args.hyperedge_table_path or (
+        Path(data_args.dataset_path) / "hyperedge_table.json"
+    )
+    table = HypergraphTable.from_json(table_path)
     input_dims = {
-        view: feature_tables[view.removeprefix("co_")].size(1) for view in views
+        view: (768 if view == "co" else feature_tables[view.removeprefix("co_")].size(1))
+        for view in views
     }
     config = HoCRSGroundingConfig(
         views=views,
@@ -77,11 +82,8 @@ def main() -> None:
         lambda_ga_sa=model_args.grounding_ga_sa_weight,
         lambda_ga_sn=model_args.grounding_ga_sn_weight,
         lambda_sa_sn=model_args.grounding_sa_sn_weight,
+        num_items=table.num_items,
     )
-    table_path = data_args.hyperedge_table_path or (
-        Path(data_args.dataset_path) / "hyperedge_table.json"
-    )
-    table = HypergraphTable.from_json(table_path)
     combined_state = {}
     selections = {}
     for view in views:
@@ -90,7 +92,7 @@ def main() -> None:
         view_config.views = (view,)
         tokenizer = None
         source_view = view.removeprefix("co_")
-        if source_view == "txt":
+        if view != "co" and source_view == "txt":
             tokenizer = AutoTokenizer.from_pretrained(
                 model_args.grounding_tokenizer_name_or_path
             )
@@ -119,9 +121,10 @@ def main() -> None:
             model=model,
             args=args,
             data_collator=HoCRSGroundingCollator(
-                {source_view: feature_tables[source_view]},
+                {} if view == "co" else {source_view: feature_tables[source_view]},
                 (view,),
-                GroundingSourceDataset(data_args.dataset_path, (source_view,)),
+                GroundingSourceDataset(data_args.dataset_path, (source_view,))
+                if view != "co" else None,
                 tokenizer,
             ),
             train_dataset=train_dataset,
@@ -162,6 +165,16 @@ def main() -> None:
         model = HoCRSGroundingModel(config)
         model.load_state_dict(combined_state, strict=True)
         model.save_pretrained(training_args.output_dir)
+        if model.id_embeddings is not None:
+            torch.save(
+                {
+                    "embeddings": model.id_embeddings.weight.detach().cpu(),
+                    "num_items": table.num_items,
+                    "item_ids": list(range(table.num_items)),
+                    "view": "co",
+                },
+                Path(training_args.output_dir) / "id_embeddings.pt",
+            )
         (Path(training_args.output_dir) / "best_modalities.json").write_text(
             json.dumps(selections, indent=2), encoding="utf-8"
         )
