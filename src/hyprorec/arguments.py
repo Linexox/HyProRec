@@ -53,6 +53,7 @@ class DataArguments:
     dataset_path: str = "data/hocrs2_redial"
     hyperedge_table_path: str | None = None
     embeddings_dir_name: str = "embeddings"
+    id_embeddings_path: str | None = None
     views: list[str] = field(default_factory=lambda: list(ALL_GRAPH_VIEWS))
     grounding_views: list[str] | None = None
     topk: int = 3
@@ -60,15 +61,16 @@ class DataArguments:
     hyperedge_sampling: str = "strict"
     sample_repeat: int = 1
     max_history_tokens: int = 256
+    global_hypergraph: bool = False
 
     def __post_init__(self) -> None:
         self.views = list(dict.fromkeys(self.views))
         if set(self.views) - set(ALL_GRAPH_VIEWS):
             raise ValueError(f"Unknown or duplicated graph views: {self.views}")
         if self.grounding_views is not None:
-            allowed_grounding_views = set(MODALITIES) | {
-                f"co_{view}" for view in MODALITIES
-            } | {"co"}
+            allowed_grounding_views = (
+                set(MODALITIES) | {f"co_{view}" for view in MODALITIES} | {"co"}
+            )
             if (
                 not self.grounding_views
                 or len(set(self.grounding_views)) != len(self.grounding_views)

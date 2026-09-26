@@ -32,7 +32,9 @@ def _load_modality_tables(
 ) -> dict[str, torch.Tensor]:
     graph_views = {view for view in data_args.views if view in MODALITIES}
     if "co" in data_args.views:
-        graph_views.add(model_args.co_feature_view)
+        graph_views.add(
+            "co" if data_args.id_embeddings_path else model_args.co_feature_view
+        )
     item_views = (
         set(MODALITIES)
         if model_args.item_table_view == "full"
@@ -45,13 +47,19 @@ def _load_modality_tables(
         else set()
     )
     directory = Path(data_args.dataset_path) / data_args.embeddings_dir_name
-    return {
+    tables = {
         view: torch.load(
             directory / f"{view}_embeddings.pt", map_location="cpu", weights_only=True
         ).float()
         for view in MODALITIES
         if view in needed
     }
+    if "co" in data_args.views and data_args.id_embeddings_path:
+        payload = torch.load(
+            data_args.id_embeddings_path, map_location="cpu", weights_only=True
+        )
+        tables["co"] = payload["embeddings"] if isinstance(payload, dict) else payload
+    return tables
 
 
 def _build_model(
@@ -65,7 +73,11 @@ def _build_model(
     num_items = next(iter(tables.values())).size(0)
     graph_configs = {}
     for view in data_args.views:
-        feature_view = model_args.co_feature_view if view == "co" else view
+        feature_view = (
+            "co"
+            if view == "co" and "co" in tables
+            else model_args.co_feature_view if view == "co" else view
+        )
         graph_configs[view] = HoCRSHypergraphConfig(
             input_dim=tables[feature_view].size(1),
             hidden_dim=model_args.hypergraph_hidden_dim,
@@ -88,6 +100,10 @@ def _build_model(
         num_prompt_tokens=model_args.num_prompt_tokens,
         freeze_backbone=model_args.freeze_backbone,
         prompt_token_id=processor.get_token_id_map()["soft_prompt_token_id"],
+        hyperedge_token_id=processor.get_token_id_map()["hyperedge_token_id"],
+        graph_start_token_ids=processor.get_token_id_map()["graph_start_token_ids"],
+        graph_end_token_ids=processor.get_token_id_map()["graph_end_token_ids"],
+        global_hypergraph=data_args.global_hypergraph,
         **{f"{view}_hypergraph_config": value for view, value in graph_configs.items()},
     )
     model_class = (
@@ -112,7 +128,9 @@ class TestEvaluationCallback(TrainerCallback):
         if eval_steps is None or state.global_step % int(eval_steps) != 0:
             return control
         previous = copy(control)
-        metrics = self.trainer.evaluate(eval_dataset=self.dataset, metric_key_prefix="test")
+        metrics = self.trainer.evaluate(
+            eval_dataset=self.dataset, metric_key_prefix="test"
+        )
         if self.trainer.is_world_process_zero():
             self.trainer.save_metrics("test", metrics)
         return previous
@@ -145,12 +163,13 @@ def main() -> None:
     set_seed(training_args.seed)
     tokenizer = AutoTokenizer.from_pretrained(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(
-        tokenizer=tokenizer,
-        num_prompt_tokens=model_args.num_prompt_tokens
+        tokenizer=tokenizer, num_prompt_tokens=model_args.num_prompt_tokens
     )
     tables = _load_modality_tables(data_args, model_args)
     model = _build_model(model_args, data_args, processor, tables)
-    table_path = data_args.hyperedge_table_path or str(Path(data_args.dataset_path) / "hyperedge_table.json")
+    table_path = data_args.hyperedge_table_path or str(
+        Path(data_args.dataset_path) / "hyperedge_table.json"
+    )
     hypergraph_table = HypergraphTable.from_json(table_path)
     train_config = HoCRSDatasetConfig(
         dataset_path=data_args.dataset_path,
@@ -161,6 +180,7 @@ def main() -> None:
         khop=data_args.khop,
         sampling=data_args.hyperedge_sampling,
         sample_repeat=data_args.sample_repeat,
+        global_hypergraph=data_args.global_hypergraph,
     )
     eval_config = HoCRSDatasetConfig(
         dataset_path=data_args.dataset_path,
@@ -169,6 +189,7 @@ def main() -> None:
         views=tuple(data_args.views),
         topk=data_args.topk,
         khop=data_args.khop,
+        global_hypergraph=data_args.global_hypergraph,
     )
     train_dataset = (
         HoCRSDataset(train_config, "train", hypergraph_table)
@@ -197,7 +218,9 @@ def main() -> None:
         data_collator=HoCRSDataCollator(
             processor,
             model_args.task,
-            data_args.max_history_tokens
+            data_args.max_history_tokens,
+            global_hypergraph=data_args.global_hypergraph,
+            views=tuple(data_args.views),
         ),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
@@ -224,7 +247,9 @@ def main() -> None:
     if eval_dataset is not None:
         trainer.save_metrics("eval", trainer.evaluate(metric_key_prefix="eval"))
     if test_dataset is not None:
-        trainer.save_metrics("test", trainer.predict(test_dataset, metric_key_prefix="test").metrics)
+        trainer.save_metrics(
+            "test", trainer.predict(test_dataset, metric_key_prefix="test").metrics
+        )
 
 
 if __name__ == "__main__":

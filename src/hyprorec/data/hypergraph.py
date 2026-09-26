@@ -90,5 +90,12 @@ class HypergraphTable:
             frontier = list(dict.fromkeys(next_frontier))
         return HypergraphData.from_hyperedges(view, edges)
 
+    def build_global(self, view: str, topk: int) -> HypergraphData:
+        """Build one fixed hyperedge for every catalogue item."""
+        edges = []
+        for anchor_id, row in enumerate(self.tables[view]):
+            edges.append((anchor_id, list(row[1 : 1 + topk])))
+        return HypergraphData.from_hyperedges(view, edges)
+
 
 __all__ = ["HypergraphData", "HypergraphTable"]

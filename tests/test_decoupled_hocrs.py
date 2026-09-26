@@ -16,7 +16,7 @@ from transformers import (
 
 from hyprorec.configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
 from hyprorec.data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
-from hyprorec.data.hypergraph import HypergraphTable
+from hyprorec.data.hypergraph import HypergraphData, HypergraphTable
 from hyprorec.data.grounding import HoCRSGroundingDataset
 from hyprorec.configuration_grounding import HoCRSGroundingConfig
 from hyprorec.modeling_hocrs import HoCRSConversationModel, HoCRSRecommendationModel
@@ -179,6 +179,56 @@ def test_recommendation_heads_and_conversation_are_independent():
     output = dialogue(input_ids, attention_mask=attention, labels=labels)
     assert torch.isfinite(output.loss)
     assert dialogue.generate(input_ids, max_new_tokens=2).shape[1] == 25
+
+
+def test_global_hypergraph_injects_history_edges_and_routes_views():
+    p = processor()
+    ids = p.get_token_id_map()
+    graph = HoCRSHypergraphConfig(input_dim=4, hidden_dim=8, output_dim=4, num_layers=2)
+    c = HoCRSConfig(
+        backbone_config=GPT2Config(
+            vocab_size=len(p.tokenizer),
+            n_embd=8,
+            n_layer=1,
+            n_head=2,
+            n_positions=128,
+            bos_token_id=1,
+            eos_token_id=1,
+            pad_token_id=1,
+        ),
+        views=("co", "txt"),
+        co_feature_view="txt",
+        co_hypergraph_config=graph,
+        txt_hypergraph_config=graph,
+        item_feature_dims={"co": 4, "txt": 4},
+        num_items=3,
+        global_hypergraph=True,
+        prompt_token_id=ids["soft_prompt_token_id"],
+        hyperedge_token_id=ids["hyperedge_token_id"],
+        graph_start_token_ids=ids["graph_start_token_ids"],
+        graph_end_token_ids=ids["graph_end_token_ids"],
+        recommendation_hidden_dim=8,
+    )
+    model = HoCRSRecommendationModel(c)
+    model.initialize_feature_tables({"co": torch.randn(3, 4), "txt": torch.randn(3, 4)})
+    graphs = {
+        view: HypergraphData.from_hyperedges(
+            view, [(item, [(item + 1) % 3]) for item in range(3)]
+        )
+        for view in ("co", "txt")
+    }
+    prompt = p.build_prompt("", {"co": (0, 1), "txt": (0, 1)})
+    encoded = p.tokenizer(prompt, return_tensors="pt")
+    output = model(
+        encoded["input_ids"],
+        attention_mask=encoded["attention_mask"],
+        pooling_mask=encoded["attention_mask"].bool(),
+        rec_labels=torch.tensor([1]),
+        global_hypergraphs=graphs,
+        history_item_ids={"co": [[0]], "txt": [[0]]},
+    )
+    assert output.logits.shape == (1, 3)
+    assert torch.isfinite(output.loss)
 
 
 def test_single_co_view_uses_chosen_modality_features():

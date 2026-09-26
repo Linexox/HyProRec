@@ -26,6 +26,7 @@ class HoCRSDatasetConfig:
     khop: int = 2
     sampling: str = "strict"
     sample_repeat: int = 1
+    global_hypergraph: bool = False
 
     def __post_init__(self) -> None:
         if self.task not in {"recommendation", "conversation"}:
@@ -58,6 +59,14 @@ class HoCRSDataset(Dataset):
         )
         self.hypergraph_table = hypergraph_table or HypergraphTable.from_json(
             table_path
+        )
+        self.global_hypergraphs = (
+            {
+                view: self.hypergraph_table.build_global(view, config.topk)
+                for view in config.views
+            }
+            if config.global_hypergraph
+            else None
         )
         with (Path(config.dataset_path) / self.SPLIT_FILES[split]).open(
             encoding="utf-8"
@@ -94,6 +103,12 @@ class HoCRSDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         sample = self.samples[index // self.repeat]
+        if self.config.global_hypergraph:
+            return {
+                **sample,
+                "hypergraphs": {},
+                "global_hypergraphs": self.global_hypergraphs,
+            }
         sampling = self.config.sampling if self.split == "train" else "strict"
         graphs = {}
         if sample["context_item_ids"]:
@@ -112,11 +127,18 @@ class HoCRSDataset(Dataset):
 
 class HoCRSDataCollator:
     def __init__(
-        self, processor: HoCRSProcessor, task: str, max_history_tokens: int = 256
+        self,
+        processor: HoCRSProcessor,
+        task: str,
+        max_history_tokens: int = 256,
+        global_hypergraph: bool = False,
+        views: Sequence[str] = ALL_GRAPH_VIEWS,
     ) -> None:
         self.processor = processor
         self.task = task
         self.max_history_tokens = max_history_tokens
+        self.global_hypergraph = global_hypergraph
+        self.views = tuple(views)
 
     @staticmethod
     def _positions(input_ids, start_id, end_id, value_id, counts):
@@ -142,10 +164,15 @@ class HoCRSDataCollator:
                 "input_ids"
             ][-self.max_history_tokens :]
             context = tokenizer.decode(history, skip_special_tokens=False)
-            sizes = {
-                view: (graph.num_nodes, graph.num_hyperedges)
-                for view, graph in sample["hypergraphs"].items()
-            }
+            if self.global_hypergraph:
+                sizes = {
+                    view: (0, len(sample["context_item_ids"])) for view in self.views
+                }
+            else:
+                sizes = {
+                    view: (graph.num_nodes, graph.num_hyperedges)
+                    for view, graph in sample["hypergraphs"].items()
+                }
             prompt = self.processor.build_prompt(context, sizes)
             if self.task == "conversation":
                 prompt += f"\n{sample['role']}:"
@@ -192,6 +219,12 @@ class HoCRSDataCollator:
                 "hypergraphs": hypergraphs,
             }
         )
+        if self.global_hypergraph:
+            batch["global_hypergraphs"] = features[0].get("global_hypergraphs", {})
+            batch["history_item_ids"] = {
+                view: [list(sample["context_item_ids"]) for sample in features]
+                for view in self.views
+            }
         if self.task == "recommendation":
             batch["pooling_mask"] = encoded["attention_mask"].bool()
             batch["rec_labels"] = torch.tensor(

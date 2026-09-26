@@ -172,6 +172,8 @@ def main() -> None:
         processor,
         task="recommendation",
         max_history_tokens=data_args.max_history_tokens,
+        global_hypergraph=data_args.global_hypergraph,
+        views=tuple(data_args.views),
     )
     dataset_path = Path(data_args.dataset_path)
     table_path = Path(
@@ -187,6 +189,7 @@ def main() -> None:
         views=tuple(data_args.views),
         topk=data_args.topk,
         khop=data_args.khop,
+        global_hypergraph=data_args.global_hypergraph,
     )
     output_dir = (args.output_dir or checkpoint / "predictions").resolve()
     summary: dict[str, Any] = {

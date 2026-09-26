@@ -80,11 +80,15 @@ class HoCRSConfig(PretrainedConfig):
         item_feature_dims: dict[str, int] | None = None,
         item_table_view: str = "txt",
         grounding_checkpoint_path: str | None = None,
+        global_hypergraph: bool = False,
         recommendation_hidden_dim: int = 2048,
         recommendation_temperature: float = 0.07,
         num_prompt_tokens: int = 20,
         freeze_backbone: bool = True,
         prompt_token_id: int | None = None,
+        hyperedge_token_id: int | None = None,
+        graph_start_token_ids: dict[str, int] | None = None,
+        graph_end_token_ids: dict[str, int] | None = None,
         **kwargs: Any,
     ) -> None:
         backbone_config = _backbone_config(backbone_config)
@@ -98,13 +102,17 @@ class HoCRSConfig(PretrainedConfig):
         if recommendation_head not in {"item_table", "mlp"}:
             raise ValueError("recommendation_head must be item_table or mlp.")
         if set(views) - set(ALL_GRAPH_VIEWS):
-            raise ValueError(f"views must contain each graph view at most once: {ALL_GRAPH_VIEWS}")
+            raise ValueError(
+                f"views must contain each graph view at most once: {ALL_GRAPH_VIEWS}"
+            )
         if co_feature_view not in MODALITIES:
             raise ValueError(f"co_feature_view must be one of {MODALITIES}.")
         if item_table_view not in (*MODALITIES, "full"):
             raise ValueError("item_table_view must be a modality or full.")
         if num_items < 1 or recommendation_hidden_dim < 1 or num_prompt_tokens != 20:
-            raise ValueError("num_items and recommendation_hidden_dim must be positive; prompts must have length 20.")
+            raise ValueError(
+                "num_items and recommendation_hidden_dim must be positive; prompts must have length 20."
+            )
         if recommendation_temperature <= 0:
             raise ValueError("recommendation_temperature must be positive.")
         self.task = task
@@ -115,11 +123,15 @@ class HoCRSConfig(PretrainedConfig):
         self.item_feature_dims = dict(item_feature_dims or {})
         self.item_table_view = item_table_view
         self.grounding_checkpoint_path = grounding_checkpoint_path
+        self.global_hypergraph = bool(global_hypergraph)
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_temperature = recommendation_temperature
         self.num_prompt_tokens = num_prompt_tokens
         self.freeze_backbone = freeze_backbone
         self.prompt_token_id = prompt_token_id
+        self.hyperedge_token_id = hyperedge_token_id
+        self.graph_start_token_ids = dict(graph_start_token_ids or {})
+        self.graph_end_token_ids = dict(graph_end_token_ids or {})
         self.txt_hypergraph_config = _graph_config(txt_hypergraph_config)
         self.img_hypergraph_config = _graph_config(img_hypergraph_config)
         self.ado_hypergraph_config = _graph_config(ado_hypergraph_config)
