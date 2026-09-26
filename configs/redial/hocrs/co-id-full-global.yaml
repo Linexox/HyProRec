@@ -7,7 +7,7 @@ model:
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
-  grounding_checkpoint_path: outputs/redial/hocrs/grounding-hyprorec-redial/merged
+  grounding_checkpoint_path: outputs/redial/hocrs/grounding-hyprorec-redial/co-id-merged
   item_table_view: txt
   co_feature_view: txt
   recommendation_hidden_dim: 2048
@@ -16,7 +16,7 @@ data:
   dataset_path: data/ucrs_redial_hyprorec
   hyperedge_table_path: data/ucrs_redial_hyprorec/hyperedge_table.json
   embeddings_dir_name: embeddings
-  id_embeddings_path: outputs/redial/hocrs/grounding-hyprorec-redial/co-id/id_embeddings.pt
+  id_embeddings_path: data/ucrs_redial_hyprorec/id_embeddings.pt
   views: [co, txt, img, vdo, ado]
   topk: 3
   khop: 2
@@ -48,6 +48,6 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   report_to: wandb
-  run_name: co-id-full-global
+  run_name: full
   seed: 42
   data_seed: 42
