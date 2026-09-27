@@ -32,6 +32,13 @@ class ModelArguments:
     co_feature_view: str = "txt"
     recommendation_hidden_dim: int = 2048
     recommendation_temperature: float = 0.07
+    alignment_weight: float = 0.0
+    co_alignment_weight: float = 0.0
+    alignment_temperature: float = 0.07
+    alignment_sample_size: int = 512
+    alignment_views: list[str] = field(
+        default_factory=lambda: ["txt", "img", "vdo", "ado"]
+    )
 
     def __post_init__(self) -> None:
         if self.task not in {"recommendation", "conversation"}:
@@ -46,6 +53,15 @@ class ModelArguments:
             raise ValueError(
                 "num_prompt_tokens must be 20 and recommendation_hidden_dim positive."
             )
+        if self.alignment_weight < 0 or self.co_alignment_weight < 0:
+            raise ValueError("Alignment weights must be non-negative.")
+        if self.alignment_temperature <= 0 or self.alignment_sample_size < 2:
+            raise ValueError(
+                "Alignment temperature must be positive and sample size at least 2."
+            )
+        self.alignment_views = list(dict.fromkeys(self.alignment_views))
+        if set(self.alignment_views) - set(MODALITIES):
+            raise ValueError("alignment_views must contain only semantic modalities.")
 
 
 @dataclass

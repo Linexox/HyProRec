@@ -83,6 +83,11 @@ class HoCRSConfig(PretrainedConfig):
         global_hypergraph: bool = False,
         recommendation_hidden_dim: int = 2048,
         recommendation_temperature: float = 0.07,
+        alignment_weight: float = 0.0,
+        co_alignment_weight: float = 0.0,
+        alignment_temperature: float = 0.07,
+        alignment_sample_size: int = 512,
+        alignment_views: list[str] | tuple[str, ...] | None = None,
         num_prompt_tokens: int = 20,
         freeze_backbone: bool = True,
         prompt_token_id: int | None = None,
@@ -115,6 +120,13 @@ class HoCRSConfig(PretrainedConfig):
             )
         if recommendation_temperature <= 0:
             raise ValueError("recommendation_temperature must be positive.")
+        if (
+            alignment_weight < 0
+            or co_alignment_weight < 0
+            or alignment_temperature <= 0
+            or alignment_sample_size < 2
+        ):
+            raise ValueError("Invalid hyperedge alignment configuration.")
         self.task = task
         self.recommendation_head = recommendation_head
         self.views = views
@@ -126,6 +138,15 @@ class HoCRSConfig(PretrainedConfig):
         self.global_hypergraph = bool(global_hypergraph)
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_temperature = recommendation_temperature
+        self.alignment_weight = float(alignment_weight)
+        self.co_alignment_weight = float(co_alignment_weight)
+        self.alignment_temperature = float(alignment_temperature)
+        self.alignment_sample_size = int(alignment_sample_size)
+        self.alignment_views = tuple(
+            dict.fromkeys(alignment_views or ("txt", "img", "vdo", "ado"))
+        )
+        if set(self.alignment_views) - set(MODALITIES):
+            raise ValueError("alignment_views must contain semantic modalities.")
         self.num_prompt_tokens = num_prompt_tokens
         self.freeze_backbone = freeze_backbone
         self.prompt_token_id = prompt_token_id

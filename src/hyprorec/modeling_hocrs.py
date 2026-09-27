@@ -13,6 +13,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
 from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
+    ModelOutput,
     SequenceClassifierOutput,
 )
 
@@ -49,6 +50,18 @@ def _hidden_size(config) -> int:
 class HypergraphEncoderOutput:
     node_features: torch.Tensor
     hyperedge_features: torch.Tensor
+
+
+@dataclass
+class HoCRSRecommendationOutput(ModelOutput):
+    """Recommendation output with optional alignment diagnostics."""
+
+    loss: torch.Tensor | None = None
+    logits: torch.Tensor | None = None
+    alignment_loss: torch.Tensor | None = None
+    semantic_alignment_loss: torch.Tensor | None = None
+    co_alignment_loss: torch.Tensor | None = None
+    route: torch.Tensor | None = None
 
 
 def hypergraph_propagate(
@@ -219,18 +232,94 @@ class GlobalHyperedgeMixtureHead(nn.Module):
         )
         self.router = nn.Linear(input_dim, len(self.views))
 
+    def candidate_embeddings(self, tables):
+        return {
+            view: F.normalize(self.table_projectors[view](tables[view]), dim=-1)
+            for view in self.views
+        }
+
     def forward(self, pooled, tables):
         user = F.normalize(self.user_projector(pooled), dim=-1)
+        embeddings = self.candidate_embeddings(tables)
         probabilities = []
         for view in self.views:
-            table = F.normalize(self.table_projectors[view](tables[view]), dim=-1)
-            probabilities.append((user @ table.t() / self.temperature).softmax(dim=-1))
+            probabilities.append(
+                (user @ embeddings[view].t() / self.temperature).softmax(dim=-1)
+            )
         stacked = torch.stack(probabilities, dim=1)
         route = self.router(pooled.float()).softmax(dim=-1).to(stacked.dtype)
         return (
             torch.log((stacked * route.unsqueeze(-1)).sum(dim=1).clamp_min(1e-8)),
             route,
         )
+
+    @staticmethod
+    def _pair_alignment_loss(left, right, indices, temperature):
+        left = left.index_select(0, indices).float()
+        right = right.index_select(0, indices).float()
+        logits = left @ right.t() / temperature
+        targets = torch.arange(indices.numel(), device=indices.device)
+        return (
+            F.cross_entropy(logits, targets)
+            + F.cross_entropy(logits.t(), targets)
+        ) / 2
+
+    def alignment_losses(
+        self,
+        tables,
+        valid_masks,
+        semantic_views,
+        sample_size,
+        temperature,
+        co_weight,
+    ):
+        embeddings = self.candidate_embeddings(tables)
+        semantic_views = tuple(
+            view for view in semantic_views if view in embeddings
+        )
+        semantic_terms = []
+        for index, left_view in enumerate(semantic_views):
+            for right_view in semantic_views[index + 1 :]:
+                valid = valid_masks[left_view] & valid_masks[right_view]
+                indices = valid.nonzero(as_tuple=False).flatten()
+                if indices.numel() < 2:
+                    continue
+                if indices.numel() > sample_size:
+                    indices = indices[
+                        torch.randperm(indices.numel(), device=indices.device)[:sample_size]
+                    ]
+                semantic_terms.append(
+                    self._pair_alignment_loss(
+                        embeddings[left_view],
+                        embeddings[right_view],
+                        indices,
+                        temperature,
+                    )
+                )
+        zero = next(iter(embeddings.values())).sum() * 0.0
+        semantic_loss = (
+            torch.stack(semantic_terms).mean() if semantic_terms else zero
+        )
+
+        co_terms = []
+        if co_weight > 0 and "co" in embeddings:
+            co_valid = valid_masks["co"]
+            for view in semantic_views:
+                valid = co_valid & valid_masks[view]
+                indices = valid.nonzero(as_tuple=False).flatten()
+                if indices.numel() < 2:
+                    continue
+                if indices.numel() > sample_size:
+                    indices = indices[
+                        torch.randperm(indices.numel(), device=indices.device)[:sample_size]
+                    ]
+                co_terms.append(
+                    self._pair_alignment_loss(
+                        embeddings["co"], embeddings[view], indices, temperature
+                    )
+                )
+        co_loss = torch.stack(co_terms).mean() if co_terms else zero
+        return semantic_loss, co_loss
 
 
 class RecommendationHead(nn.Module):
@@ -294,6 +383,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             else GraphTokenMoE(hidden_size, config.views)
         )
         self._global_hypergraph_outputs = {}
+        self._global_hypergraph_valid = {}
         if config.freeze_backbone:
             self.backbone.requires_grad_(False)
         self.post_init()
@@ -354,6 +444,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             if hasattr(self, f"{name}_feature_table")
         }
         self._global_hypergraph_outputs = {}
+        self._global_hypergraph_valid = {}
         for view, graph in hypergraphs.items():
             feature_view = (
                 view if view in feature_tables else self.config.co_feature_view
@@ -373,6 +464,12 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             self._global_hypergraph_outputs[view] = HypergraphEncoderOutput(
                 output.node_features.detach(), output.hyperedge_features.detach()
             )
+            edge_counts = torch.bincount(
+                graph.hyperedge_index[1], minlength=graph.num_hyperedges
+            )
+            self._global_hypergraph_valid[view] = (
+                edge_counts > 1
+            ).to(device=device)
 
     def project_global_hyperedges(self):
         if not self._global_hypergraph_outputs:
@@ -568,15 +665,68 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
         pooled = (hidden * pooling_mask.to(hidden.dtype).unsqueeze(-1)).sum(dim=1)
         pooled = pooled / pooling_mask.sum(dim=1, keepdim=True).to(hidden.dtype)
         if self.global_recommendation_head is not None:
-            scores, _ = self.global_recommendation_head(
-                pooled, self.project_global_hyperedges()
+            tables = self.project_global_hyperedges()
+            scores, route = self.global_recommendation_head(pooled, tables)
+            rec_loss = (
+                F.nll_loss(scores, rec_labels) if rec_labels is not None else None
             )
-            loss = F.nll_loss(scores, rec_labels) if rec_labels is not None else None
+            alignment_loss = semantic_alignment_loss = co_alignment_loss = None
+            # The alignment term is a training regularizer over the global
+            # catalogue.  It is independent of the current user batch, so do
+            # not recompute it during validation/test or let it change the
+            # reported recommendation loss.
+            if (
+                self.training
+                and rec_labels is not None
+                and (
+                    self.config.alignment_weight > 0
+                    or self.config.co_alignment_weight > 0
+                )
+            ):
+                valid_masks = {
+                    view: self._global_hypergraph_valid.get(
+                        view,
+                        torch.ones(
+                            tables[view].size(0),
+                            dtype=torch.bool,
+                            device=tables[view].device,
+                        ),
+                    )
+                    for view in tables
+                }
+                semantic_alignment_loss, co_alignment_loss = (
+                    self.global_recommendation_head.alignment_losses(
+                        tables,
+                        valid_masks,
+                        self.config.alignment_views,
+                        self.config.alignment_sample_size,
+                        self.config.alignment_temperature,
+                        self.config.co_alignment_weight,
+                    )
+                )
+                alignment_loss = (
+                    self.config.alignment_weight * semantic_alignment_loss
+                    + self.config.co_alignment_weight * co_alignment_loss
+                )
+            loss = rec_loss
+            if loss is not None and alignment_loss is not None:
+                loss = loss + alignment_loss
         else:
             assert self.recommendation_head is not None
             scores = self.recommendation_head(pooled, self._feature_tables())
             loss = (
                 F.cross_entropy(scores, rec_labels) if rec_labels is not None else None
+            )
+            route = None
+            alignment_loss = semantic_alignment_loss = co_alignment_loss = None
+        if self.global_recommendation_head is not None:
+            return HoCRSRecommendationOutput(
+                loss=loss,
+                logits=scores,
+                alignment_loss=alignment_loss,
+                semantic_alignment_loss=semantic_alignment_loss,
+                co_alignment_loss=co_alignment_loss,
+                route=route,
             )
         return SequenceClassifierOutput(loss=loss, logits=scores)
 
@@ -614,6 +764,7 @@ __all__ = [
     "HoCRSConfig",
     "HoCRSConversationModel",
     "HoCRSRecommendationModel",
+    "HoCRSRecommendationOutput",
     "HypergraphEncoder",
     "HypergraphEncoderOutput",
     "HypergraphProjector",
