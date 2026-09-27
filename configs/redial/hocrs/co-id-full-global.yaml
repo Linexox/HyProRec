@@ -41,9 +41,10 @@ training:
   gradient_checkpointing_kwargs: {use_reentrant: false}
   ddp_find_unused_parameters: true
   eval_strategy: steps
-  eval_steps: 200
+  eval_steps: 1000
   save_strategy: steps
-  save_steps: 200
+  save_steps: 1000
+  save_total_limit: 2
   load_best_model_at_end: true
   metric_for_best_model: eval_loss
   greater_is_better: false

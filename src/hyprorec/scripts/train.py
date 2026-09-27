@@ -27,6 +27,13 @@ from ..modeling_hocrs import (
 from ..processing_hocrs import HoCRSProcessor
 
 
+# CRS runs evaluate and checkpoint at a fixed interval.  Trainer's
+# ``save_total_limit=2`` keeps the validation-best checkpoint and the latest
+# checkpoint while rotating older step checkpoints away.
+EVAL_AND_SAVE_EVERY_STEPS = 1000
+CHECKPOINT_LIMIT = 2
+
+
 def _load_modality_tables(
     data_args: DataArguments, model_args: ModelArguments
 ) -> dict[str, torch.Tensor]:
@@ -160,6 +167,14 @@ def _save_provenance(output_dir, config_path, model_args, data_args, training_ar
 def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
+    # Keep long CRS runs from evaluating/saving at every short interval in an
+    # experiment YAML.  The effective settings are also captured by the
+    # provenance written below.
+    training_args.eval_strategy = "steps"
+    training_args.eval_steps = EVAL_AND_SAVE_EVERY_STEPS
+    training_args.save_strategy = "steps"
+    training_args.save_steps = EVAL_AND_SAVE_EVERY_STEPS
+    training_args.save_total_limit = CHECKPOINT_LIMIT
     set_seed(training_args.seed)
     tokenizer = AutoTokenizer.from_pretrained(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(
