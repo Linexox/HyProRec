@@ -32,6 +32,10 @@ class ModelArguments:
     co_feature_view: str = "txt"
     recommendation_hidden_dim: int = 2048
     recommendation_temperature: float = 0.07
+    logit_fusion: bool = False
+    view_retrieval_weight: float = 0.0
+    view_specific_queries: bool = False
+    view_query_adapter_dim: int = 256
     alignment_weight: float = 0.0
     co_alignment_weight: float = 0.0
     alignment_temperature: float = 0.07
@@ -55,6 +59,10 @@ class ModelArguments:
             )
         if self.alignment_weight < 0 or self.co_alignment_weight < 0:
             raise ValueError("Alignment weights must be non-negative.")
+        if self.view_retrieval_weight < 0 or self.view_query_adapter_dim < 1:
+            raise ValueError(
+                "view_retrieval_weight must be non-negative and view_query_adapter_dim positive."
+            )
         if self.alignment_temperature <= 0 or self.alignment_sample_size < 2:
             raise ValueError(
                 "Alignment temperature must be positive and sample size at least 2."

@@ -83,6 +83,10 @@ class HoCRSConfig(PretrainedConfig):
         global_hypergraph: bool = False,
         recommendation_hidden_dim: int = 2048,
         recommendation_temperature: float = 0.07,
+        logit_fusion: bool = False,
+        view_retrieval_weight: float = 0.0,
+        view_specific_queries: bool = False,
+        view_query_adapter_dim: int = 256,
         alignment_weight: float = 0.0,
         co_alignment_weight: float = 0.0,
         alignment_temperature: float = 0.07,
@@ -120,6 +124,10 @@ class HoCRSConfig(PretrainedConfig):
             )
         if recommendation_temperature <= 0:
             raise ValueError("recommendation_temperature must be positive.")
+        if view_retrieval_weight < 0 or view_query_adapter_dim < 1:
+            raise ValueError(
+                "view_retrieval_weight must be non-negative and view_query_adapter_dim positive."
+            )
         if (
             alignment_weight < 0
             or co_alignment_weight < 0
@@ -138,6 +146,10 @@ class HoCRSConfig(PretrainedConfig):
         self.global_hypergraph = bool(global_hypergraph)
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_temperature = recommendation_temperature
+        self.logit_fusion = bool(logit_fusion)
+        self.view_retrieval_weight = float(view_retrieval_weight)
+        self.view_specific_queries = bool(view_specific_queries)
+        self.view_query_adapter_dim = int(view_query_adapter_dim)
         self.alignment_weight = float(alignment_weight)
         self.co_alignment_weight = float(co_alignment_weight)
         self.alignment_temperature = float(alignment_temperature)

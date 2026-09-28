@@ -61,6 +61,7 @@ class HoCRSRecommendationOutput(ModelOutput):
     alignment_loss: torch.Tensor | None = None
     semantic_alignment_loss: torch.Tensor | None = None
     co_alignment_loss: torch.Tensor | None = None
+    view_retrieval_loss: torch.Tensor | None = None
     route: torch.Tensor | None = None
 
 
@@ -69,9 +70,7 @@ def hypergraph_propagate(
 ) -> HypergraphEncoderOutput:
     node_index, edge_index = hyperedge_index
     dtype = node_features.dtype
-    node_degree = torch.bincount(node_index, minlength=node_features.size(0)).to(
-        dtype=dtype
-    )
+    node_degree = torch.bincount(node_index, minlength=node_features.size(0)).to(dtype=dtype)
     edge_degree = torch.bincount(edge_index, minlength=num_hyperedges).to(dtype=dtype)
     node_scale = node_degree.clamp_min(1).pow(-0.5)
     edge_scale = edge_degree.clamp_min(1).reciprocal()
@@ -183,26 +182,20 @@ class ItemTableHead(nn.Module):
         names = tuple(feature_dims) if item_view == "full" else (item_view,)
         self.names = names
         self.query = nn.Linear(input_dim, output_dim, bias=False)
-        self.projects = nn.ModuleDict(
-            {
-                name: nn.Linear(feature_dims[name], output_dim, bias=False)
-                for name in names
-            }
-        )
+        self.projects = nn.ModuleDict({
+            name: nn.Linear(feature_dims[name], output_dim, bias=False)
+            for name in names
+        })
         self.fuse = (
             nn.MultiheadAttention(output_dim, num_heads=8, batch_first=True)
-            if len(names) > 1
-            else None
+            if len(names) > 1 else None
         )
 
     def item_embeddings(self, features: Mapping[str, torch.Tensor]) -> torch.Tensor:
-        projected = torch.stack(
-            [self.projects[name](features[name]) for name in self.names], dim=1
-        )
+        projected = [self.projects[name](features[name]) for name in self.names]
+        projected = torch.stack(projected, dim=1)
         if self.fuse is not None:
-            projected = self.fuse(projected, projected, projected, need_weights=False)[
-                0
-            ]
+            projected = self.fuse(projected, projected, projected, need_weights=False)[0]
         return F.normalize(projected.mean(dim=1), dim=-1)
 
     def forward(
@@ -216,20 +209,45 @@ class ItemTableHead(nn.Module):
 
 
 class GlobalHyperedgeMixtureHead(nn.Module):
-    """Softly mix per-view global hyperedge distributions."""
+    """Fuse per-view hyperedge retrieval logits with a sample-level route."""
 
-    def __init__(self, input_dim, output_dim, views, temperature):
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        views,
+        temperature,
+        logit_fusion=False,
+        view_specific_queries=False,
+        view_query_adapter_dim=256,
+    ):
         super().__init__()
         self.views = tuple(views)
         self.temperature = temperature
+        self.logit_fusion = bool(logit_fusion)
+        self.view_specific_queries = bool(view_specific_queries)
         self.user_projector = nn.Sequential(
             nn.Linear(input_dim, output_dim),
             nn.GELU(),
             nn.Linear(output_dim, output_dim),
         )
-        self.table_projectors = nn.ModuleDict(
-            {view: nn.Linear(input_dim, output_dim, bias=False) for view in self.views}
-        )
+        self.table_projectors = nn.ModuleDict({
+            view: nn.Linear(input_dim, output_dim, bias=False)
+            for view in self.views
+        })
+        self.query_adapters = nn.ModuleDict()
+        if self.view_specific_queries:
+            for view in self.views:
+                adapter = nn.Sequential(
+                    nn.Linear(output_dim, view_query_adapter_dim),
+                    nn.GELU(),
+                    nn.Linear(view_query_adapter_dim, output_dim),
+                )
+                # Start from the previously shared user query.  The adapter
+                # only learns a view-specific residual during CRS training.
+                nn.init.zeros_(adapter[-1].weight)
+                nn.init.zeros_(adapter[-1].bias)
+                self.query_adapters[view] = adapter
         self.router = nn.Linear(input_dim, len(self.views))
 
     def candidate_embeddings(self, tables):
@@ -239,18 +257,34 @@ class GlobalHyperedgeMixtureHead(nn.Module):
         }
 
     def forward(self, pooled, tables):
-        user = F.normalize(self.user_projector(pooled), dim=-1)
+        shared_user = self.user_projector(pooled)
         embeddings = self.candidate_embeddings(tables)
-        probabilities = []
+        view_logits = []
         for view in self.views:
-            probabilities.append(
-                (user @ embeddings[view].t() / self.temperature).softmax(dim=-1)
+            user = shared_user
+            if self.view_specific_queries:
+                user = user + self.query_adapters[view](shared_user)
+            user = F.normalize(user, dim=-1)
+            view_logits.append(user @ embeddings[view].t() / self.temperature)
+        view_logits = torch.stack(view_logits, dim=1)
+        route = self.router(pooled.float()).softmax(dim=-1).to(view_logits.dtype)
+        if self.logit_fusion:
+            scores = (view_logits * route.unsqueeze(-1)).sum(dim=1)
+        else:
+            probabilities = view_logits.softmax(dim=-1)
+            scores = torch.log(
+                (probabilities * route.unsqueeze(-1)).sum(dim=1).clamp_min(1e-8)
             )
-        stacked = torch.stack(probabilities, dim=1)
-        route = self.router(pooled.float()).softmax(dim=-1).to(stacked.dtype)
-        return (
-            torch.log((stacked * route.unsqueeze(-1)).sum(dim=1).clamp_min(1e-8)),
-            route,
+        return scores, route, view_logits
+
+    @staticmethod
+    def direct_view_retrieval_loss(view_logits, targets):
+        """Train every view as a standalone user-to-item retriever."""
+        batch_size, num_views, num_items = view_logits.shape
+        repeated_targets = targets.unsqueeze(1).expand(batch_size, num_views)
+        return F.cross_entropy(
+            view_logits.reshape(batch_size * num_views, num_items),
+            repeated_targets.reshape(batch_size * num_views),
         )
 
     @staticmethod
@@ -275,15 +309,15 @@ class GlobalHyperedgeMixtureHead(nn.Module):
     ):
         embeddings = self.candidate_embeddings(tables)
         semantic_views = tuple(
-            view for view in semantic_views if view in embeddings
+            view for view in semantic_views 
+            if view in embeddings
         )
         semantic_terms = []
         for index, left_view in enumerate(semantic_views):
             for right_view in semantic_views[index + 1 :]:
                 valid = valid_masks[left_view] & valid_masks[right_view]
                 indices = valid.nonzero(as_tuple=False).flatten()
-                if indices.numel() < 2:
-                    continue
+                if indices.numel() < 2: continue
                 if indices.numel() > sample_size:
                     indices = indices[
                         torch.randperm(indices.numel(), device=indices.device)[:sample_size]
@@ -298,7 +332,8 @@ class GlobalHyperedgeMixtureHead(nn.Module):
                 )
         zero = next(iter(embeddings.values())).sum() * 0.0
         semantic_loss = (
-            torch.stack(semantic_terms).mean() if semantic_terms else zero
+            torch.stack(semantic_terms).mean()
+            if semantic_terms else zero
         )
 
         co_terms = []
@@ -510,12 +545,8 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
                 )
             if positions:
                 position_tensor = torch.tensor(positions, device=embeds.device)
-                id_tensor = torch.tensor(
-                    item_ids, device=table.device, dtype=torch.long
-                )
-                values = table.index_select(0, id_tensor).to(
-                    device=embeds.device, dtype=embeds.dtype
-                )
+                id_tensor = torch.tensor(item_ids, device=table.device, dtype=torch.long)
+                values = table.index_select(0, id_tensor).to(device=embeds.device, dtype=embeds.dtype)
                 embeds[position_tensor[:, 0], position_tensor[:, 1]] = values
         return embeds
 
@@ -572,12 +603,8 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
                 ),
             )
             node_count = graph["node_positions"].size(0)
-            embeds[graph["node_positions"][:, 0], graph["node_positions"][:, 1]] = (
-                projected[:node_count].to(embeds.dtype)
-            )
-            embeds[
-                graph["hyperedge_positions"][:, 0], graph["hyperedge_positions"][:, 1]
-            ] = projected[node_count:].to(embeds.dtype)
+            embeds[graph["node_positions"][:, 0], graph["node_positions"][:, 1]] = projected[:node_count].to(embeds.dtype)
+            embeds[graph["hyperedge_positions"][:, 0], graph["hyperedge_positions"][:, 1]] = projected[node_count:].to(embeds.dtype)
         return embeds
 
     def encode(
@@ -637,6 +664,9 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
                 output_dim=config.recommendation_hidden_dim,
                 views=tuple(config.views),
                 temperature=config.recommendation_temperature,
+                logit_fusion=config.logit_fusion,
+                view_specific_queries=config.view_specific_queries,
+                view_query_adapter_dim=config.view_query_adapter_dim,
             )
             if config.global_hypergraph
             else None
@@ -666,10 +696,26 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
         pooled = pooled / pooling_mask.sum(dim=1, keepdim=True).to(hidden.dtype)
         if self.global_recommendation_head is not None:
             tables = self.project_global_hyperedges()
-            scores, route = self.global_recommendation_head(pooled, tables)
-            rec_loss = (
-                F.nll_loss(scores, rec_labels) if rec_labels is not None else None
-            )
+            scores, route, view_logits = self.global_recommendation_head(pooled, tables)
+            if rec_labels is not None:
+                rec_loss = (
+                    F.cross_entropy(scores, rec_labels)
+                    if self.config.logit_fusion
+                    else F.nll_loss(scores, rec_labels)
+                )
+            else:
+                rec_loss = None
+            view_retrieval_loss = None
+            if (
+                self.training
+                and rec_labels is not None
+                and self.config.view_retrieval_weight > 0
+            ):
+                view_retrieval_loss = (
+                    self.global_recommendation_head.direct_view_retrieval_loss(
+                        view_logits, rec_labels
+                    )
+                )
             alignment_loss = semantic_alignment_loss = co_alignment_loss = None
             # The alignment term is a training regularizer over the global
             # catalogue.  It is independent of the current user batch, so do
@@ -711,6 +757,8 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
             loss = rec_loss
             if loss is not None and alignment_loss is not None:
                 loss = loss + alignment_loss
+            if loss is not None and view_retrieval_loss is not None:
+                loss = loss + self.config.view_retrieval_weight * view_retrieval_loss
         else:
             assert self.recommendation_head is not None
             scores = self.recommendation_head(pooled, self._feature_tables())
@@ -718,6 +766,7 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
                 F.cross_entropy(scores, rec_labels) if rec_labels is not None else None
             )
             route = None
+            view_retrieval_loss = None
             alignment_loss = semantic_alignment_loss = co_alignment_loss = None
         if self.global_recommendation_head is not None:
             return HoCRSRecommendationOutput(
@@ -726,6 +775,7 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
                 alignment_loss=alignment_loss,
                 semantic_alignment_loss=semantic_alignment_loss,
                 co_alignment_loss=co_alignment_loss,
+                view_retrieval_loss=view_retrieval_loss,
                 route=route,
             )
         return SequenceClassifierOutput(loss=loss, logits=scores)
