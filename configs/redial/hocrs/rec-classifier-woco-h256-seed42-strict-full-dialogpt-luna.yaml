@@ -21,7 +21,7 @@ data:
   khop: 2
   hyperedge_sampling: strict
   sample_repeat: 1
-  max_history_tokens: 256
+  max_history_tokens: 128
 training:
   output_dir: /data2/lhf/HyProRec/luna/outputs/redial/hocrs/rec-classifier-woco-h256-seed42-strict-full-dialogpt
   do_train: true
