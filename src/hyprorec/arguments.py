@@ -32,12 +32,16 @@ class ModelArguments:
     co_feature_view: str = "txt"
     recommendation_hidden_dim: int = 2048
     recommendation_temperature: float = 0.07
+    recommendation_view_loss_weight: float = 0.2
+    use_recommendation_balance_loss: bool = False
+    recommendation_balance_loss_weight: float = 0.0
+    recommendation_router_hidden_dim: int = 512
 
     def __post_init__(self) -> None:
         if self.task not in {"recommendation", "conversation"}:
             raise ValueError("task must be recommendation or conversation.")
-        if self.recommendation_head not in {"item_table", "mlp"}:
-            raise ValueError("recommendation_head must be item_table or mlp.")
+        if self.recommendation_head != "item_table":
+            raise ValueError("Only the item_table recommendation head is supported.")
         if self.item_table_view not in (*MODALITIES, "full"):
             raise ValueError("item_table_view must be a modality or full.")
         if self.co_feature_view not in MODALITIES:
@@ -46,6 +50,12 @@ class ModelArguments:
             raise ValueError(
                 "num_prompt_tokens must be 20 and recommendation_hidden_dim positive."
             )
+        if self.recommendation_router_hidden_dim < 1:
+            raise ValueError("recommendation_router_hidden_dim must be positive.")
+        if self.recommendation_view_loss_weight < 0 or self.recommendation_balance_loss_weight < 0:
+            raise ValueError("Recommendation loss weights must be non-negative.")
+        if self.use_recommendation_balance_loss and self.recommendation_balance_loss_weight <= 0:
+            raise ValueError("Balance loss weight must be positive when enabled.")
 
 
 @dataclass
@@ -60,6 +70,8 @@ class DataArguments:
     hyperedge_sampling: str = "strict"
     sample_repeat: int = 1
     max_history_tokens: int = 256
+    max_hypergraph_nodes: int | None = 64
+    max_sequence_tokens: int = 1024
 
     def __post_init__(self) -> None:
         self.views = list(dict.fromkeys(self.views))
@@ -81,9 +93,18 @@ class DataArguments:
             raise ValueError("topk must be between 0 and 10.")
         if self.hyperedge_sampling not in {"strict", "random"}:
             raise ValueError("hyperedge_sampling must be strict or random.")
-        if self.sample_repeat < 1 or not 0 < self.max_history_tokens <= 256:
+        if (
+            self.sample_repeat < 1
+            or not 0 < self.max_history_tokens <= 256
+            or (
+                self.max_hypergraph_nodes is not None
+                and self.max_hypergraph_nodes < 1
+            )
+            or self.max_sequence_tokens < 1
+        ):
             raise ValueError(
-                "sample_repeat must be positive and max_history_tokens must be at most 256."
+                "sample_repeat must be positive, max_history_tokens must be at most "
+                "256, and sequence/node limits must be positive."
             )
 
 

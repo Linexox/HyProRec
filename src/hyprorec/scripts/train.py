@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from copy import copy
+import math
 from dataclasses import asdict
 from pathlib import Path
 
@@ -85,6 +85,10 @@ def _build_model(
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_temperature=model_args.recommendation_temperature,
+        recommendation_view_loss_weight=model_args.recommendation_view_loss_weight,
+        use_recommendation_balance_loss=model_args.use_recommendation_balance_loss,
+        recommendation_balance_loss_weight=model_args.recommendation_balance_loss_weight,
+        recommendation_router_hidden_dim=model_args.recommendation_router_hidden_dim,
         num_prompt_tokens=model_args.num_prompt_tokens,
         freeze_backbone=model_args.freeze_backbone,
         prompt_token_id=processor.get_token_id_map()["soft_prompt_token_id"],
@@ -100,22 +104,6 @@ def _build_model(
         model.load_grounding_checkpoint(model_args.grounding_checkpoint_path)
     model.initialize_feature_tables(tables)
     return model
-
-
-class TestEvaluationCallback(TrainerCallback):
-    def __init__(self, dataset):
-        self.dataset = dataset
-        self.trainer = None
-
-    def on_step_end(self, args, state, control, **kwargs):
-        eval_steps = args.eval_steps
-        if eval_steps is None or state.global_step % int(eval_steps) != 0:
-            return control
-        previous = copy(control)
-        metrics = self.trainer.evaluate(eval_dataset=self.dataset, metric_key_prefix="test")
-        if self.trainer.is_world_process_zero():
-            self.trainer.save_metrics("test", metrics)
-        return previous
 
 
 def _save_provenance(output_dir, config_path, model_args, data_args, training_args):
@@ -137,6 +125,26 @@ def _save_provenance(output_dir, config_path, model_args, data_args, training_ar
         ),
         encoding="utf-8",
     )
+
+
+class EvaluateAtEpochEndCallback(TrainerCallback):
+    """Ensure the fourth validation/save point lands at each epoch boundary."""
+
+    def __init__(self):
+        self.last_scheduled_step = None
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if args.eval_steps and state.global_step % int(args.eval_steps) == 0:
+            self.last_scheduled_step = state.global_step
+        return control
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        if state.global_step == self.last_scheduled_step:
+            return control
+        control.should_evaluate = True
+        control.should_save = True
+        self.last_scheduled_step = state.global_step
+        return control
 
 
 def main() -> None:
@@ -161,6 +169,7 @@ def main() -> None:
         khop=data_args.khop,
         sampling=data_args.hyperedge_sampling,
         sample_repeat=data_args.sample_repeat,
+        max_hypergraph_nodes=data_args.max_hypergraph_nodes,
     )
     eval_config = HoCRSDatasetConfig(
         dataset_path=data_args.dataset_path,
@@ -169,6 +178,7 @@ def main() -> None:
         views=tuple(data_args.views),
         topk=data_args.topk,
         khop=data_args.khop,
+        max_hypergraph_nodes=data_args.max_hypergraph_nodes,
     )
     train_dataset = (
         HoCRSDataset(train_config, "train", hypergraph_table)
@@ -188,26 +198,42 @@ def main() -> None:
     training_args.label_names = (
         ["rec_labels"] if model_args.task == "recommendation" else ["labels"]
     )
-    callback = (
-        TestEvaluationCallback(test_dataset) if test_dataset is not None else None
-    )
+    # The test split is deliberately kept out of the training callbacks.  It
+    # is evaluated once, after training restores the best validation-loss
+    # checkpoint.
     trainer = Trainer(
         model=model,
         args=training_args,
         data_collator=HoCRSDataCollator(
             processor,
             model_args.task,
-            data_args.max_history_tokens
+            data_args.max_history_tokens,
+            data_args.max_sequence_tokens,
         ),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=processor,
         compute_metrics=build_compute_metrics(processor, model_args.task),
         preprocess_logits_for_metrics=preprocess_logits_for_metrics(model_args.task),
-        callbacks=[callback] if callback else None,
+        callbacks=[EvaluateAtEpochEndCallback()] if training_args.do_train else None,
     )
-    if callback:
-        callback.trainer = trainer
+    if training_args.do_train and train_dataset is not None:
+        # Derive the optimizer-step cadence from the actual Trainer dataloader
+        # so each epoch gets approximately four validation/save points.
+        batches_per_epoch = len(trainer.get_train_dataloader())
+        update_steps = max(
+            1,
+            math.ceil(
+                batches_per_epoch / max(1, training_args.gradient_accumulation_steps)
+            ),
+        )
+        eval_steps = max(1, math.ceil(update_steps / 4))
+        training_args.eval_steps = eval_steps
+        training_args.save_steps = eval_steps
+        training_args.save_total_limit = 2
+        training_args.load_best_model_at_end = True
+        training_args.metric_for_best_model = "eval_loss"
+        training_args.greater_is_better = False
     if trainer.is_world_process_zero():
         processor.save_pretrained(training_args.output_dir)
         _save_provenance(
@@ -218,7 +244,11 @@ def main() -> None:
         if checkpoint is None and Path(training_args.output_dir).is_dir():
             checkpoint = get_last_checkpoint(training_args.output_dir)
         result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()
+        # ``load_best_model_at_end`` performs this inside Trainer.train; keep
+        # the explicit guard here so the final test path is unambiguously
+        # evaluated with the validation-loss-selected checkpoint.
+        if training_args.load_best_model_at_end and trainer.state.best_model_checkpoint:
+            trainer._load_best_model()
         trainer.save_state()
         trainer.save_metrics("train", result.metrics)
     if eval_dataset is not None:

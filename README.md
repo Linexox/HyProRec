@@ -2,7 +2,7 @@
 
 This branch trains recommendation and conversation as independent models and checkpoints. Each input is a task-specific 20-token soft prompt, up to 256 history tokens, and the selected local hypergraph tokens. The four semantic graph views can be combined with one co-occurrence view. The latter uses one selected modality's node features.
 
-Recommendation pools the LM's input-side hidden states and uses either a projected semantic item table (txt, img, ado, vdo, or self-attention fusion of all four) or an MLP classifier. Conversation trains causal language-model loss on every Seeker and Recommender turn. Recommendation trains on item-bearing turns from both roles.
+Recommendation pools the LM's input-side hidden states and uses independent projected semantic item tables (txt, img, ado, vdo). In the full setting, each modality produces its own user/item logits and a sample-level router fuses them. Conversation trains causal language-model loss on every Seeker and Recommender turn. Recommendation trains on item-bearing turns from both roles.
 
 The graph preparation command writes ten candidates per anchor for each semantic view and a co-occurrence table built only from train conversations:
 

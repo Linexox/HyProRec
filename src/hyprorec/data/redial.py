@@ -26,6 +26,7 @@ class HoCRSDatasetConfig:
     khop: int = 2
     sampling: str = "strict"
     sample_repeat: int = 1
+    max_hypergraph_nodes: int | None = 64
 
     def __post_init__(self) -> None:
         if self.task not in {"recommendation", "conversation"}:
@@ -36,6 +37,8 @@ class HoCRSDatasetConfig:
             raise ValueError("topk must be in [0,10] and khop must be positive.")
         if self.sampling not in {"strict", "random"} or self.sample_repeat < 1:
             raise ValueError("Invalid sampling mode or sample repeat.")
+        if self.max_hypergraph_nodes is not None and self.max_hypergraph_nodes < 1:
+            raise ValueError("max_hypergraph_nodes must be positive or None.")
 
 
 class HoCRSDataset(Dataset):
@@ -104,6 +107,7 @@ class HoCRSDataset(Dataset):
                     self.config.topk,
                     self.config.khop,
                     sampling,
+                    max_nodes=self.config.max_hypergraph_nodes,
                 )
                 for view in self.config.views
             }
@@ -112,11 +116,20 @@ class HoCRSDataset(Dataset):
 
 class HoCRSDataCollator:
     def __init__(
-        self, processor: HoCRSProcessor, task: str, max_history_tokens: int = 256
+        self,
+        processor: HoCRSProcessor,
+        task: str,
+        max_history_tokens: int = 256,
+        max_sequence_tokens: int = 1024,
     ) -> None:
         self.processor = processor
         self.task = task
         self.max_history_tokens = max_history_tokens
+        self.max_sequence_tokens = max_sequence_tokens
+        if not 0 < max_history_tokens <= 256:
+            raise ValueError("max_history_tokens must be in (0, 256].")
+        if max_sequence_tokens < 1:
+            raise ValueError("max_sequence_tokens must be positive.")
 
     @staticmethod
     def _positions(input_ids, start_id, end_id, value_id, counts):
@@ -162,6 +175,12 @@ class HoCRSDataCollator:
             prompt_lengths.append(len(prompt_ids))
         encoded = tokenizer.pad(prompts, padding=True, return_tensors="pt")
         input_ids = encoded["input_ids"]
+        if input_ids.size(1) > self.max_sequence_tokens:
+            raise ValueError(
+                "Encoded HoCRS sequence exceeds max_sequence_tokens: "
+                f"{input_ids.size(1)} > {self.max_sequence_tokens}. "
+                "Reduce max_hypergraph_nodes or inspect the length profile."
+            )
         token_ids = self.processor.get_token_id_map()
         hypergraphs = {}
         for view in dict.fromkeys(

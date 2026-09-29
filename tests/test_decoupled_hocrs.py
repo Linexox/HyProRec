@@ -127,7 +127,7 @@ def test_turn_tasks_and_input_order():
         assert (dialogue["labels"][:, :20] == -100).all()
 
 
-def test_random_topk_varies_and_has_no_node_limit():
+def test_random_topk_varies_and_respects_optional_node_limit():
     table = HypergraphTable(
         {
             "txt": [
@@ -143,6 +143,8 @@ def test_random_topk_varies_and_has_no_node_limit():
         graph.node_ids.tolist() != strict.node_ids.tolist() for graph in random_graphs
     )
     assert table.build_local(list(range(50)), "txt", 3, 1).num_hyperedges == 50
+    limited = table.build_local(list(range(100)), "txt", 3, 2, max_nodes=64)
+    assert limited.num_nodes <= 64
 
 
 def test_recommendation_heads_and_conversation_are_independent():
@@ -152,11 +154,9 @@ def test_recommendation_heads_and_conversation_are_independent():
     )
     attention = torch.ones_like(input_ids)
     features = {"txt": torch.randn(12, 8), "img": torch.randn(12, 8)}
-    for head, view in (("item_table", "txt"), ("item_table", "full"), ("mlp", "txt")):
+    for head, view in (("item_table", "txt"), ("item_table", "full")):
         model = HoCRSRecommendationModel(config(p, head=head, views=(), item_view=view))
         needed = features if view == "full" else {"txt": features["txt"]}
-        if head == "mlp":
-            needed = {}
         model.initialize_feature_tables(needed)
         output = model(
             input_ids,
@@ -171,8 +171,7 @@ def test_recommendation_heads_and_conversation_are_independent():
             model.save_pretrained(directory)
             restored = HoCRSRecommendationModel.from_pretrained(directory)
             assert restored.config.recommendation_head == head
-            if head == "item_table":
-                torch.testing.assert_close(restored.txt_feature_table, features["txt"])
+            torch.testing.assert_close(restored.item_txt_feature_table, features["txt"])
     dialogue = HoCRSConversationModel(config(p, task="conversation", views=()))
     labels = input_ids.clone()
     labels[:, :20] = -100

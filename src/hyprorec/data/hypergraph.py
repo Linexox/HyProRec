@@ -34,10 +34,16 @@ class HypergraphData:
             for node_id in dict.fromkeys((anchor, *neighbors)):
                 incidence_nodes.append(local_index(node_id))
                 incidence_edges.append(edge_id)
+        # Empty local graphs are valid for samples without retrievable history.
+        # Keep the incidence tensor two-dimensional so batching/device transfer
+        # remains well-defined even when no edge was sampled.
+        incidence = torch.tensor(
+            [incidence_nodes, incidence_edges], dtype=torch.long
+        ).reshape(2, -1)
         return cls(
             view,
             torch.tensor(node_ids, dtype=torch.long),
-            torch.tensor([incidence_nodes, incidence_edges], dtype=torch.long),
+            incidence,
             torch.tensor(anchors, dtype=torch.long),
         )
 
@@ -47,7 +53,7 @@ class HypergraphData:
 
     @property
     def num_hyperedges(self):
-        return int(self.hyperedge_index[1].max()) + 1
+        return int(self.hyperedge_anchor_index.numel())
 
 
 class HypergraphTable:
@@ -68,10 +74,13 @@ class HypergraphTable:
         khop: int,
         sampling: str = "strict",
         rng: random.Random | None = None,
+        max_nodes: int | None = None,
     ):
+        if max_nodes is not None and max_nodes < 1:
+            raise ValueError("max_nodes must be positive or None.")
         anchors = [anchor_ids] if isinstance(anchor_ids, int) else list(anchor_ids)
         frontier = list(dict.fromkeys(reversed(anchors)))
-        visited, edges = set(), []
+        visited, nodes, edges = set(), set(), []
         for _ in range(khop):
             next_frontier = []
             for anchor in frontier:
@@ -84,9 +93,36 @@ class HypergraphTable:
                     if sampling == "strict"
                     else (rng or random).sample(candidates, min(topk, len(candidates)))
                 )
+                # Add a complete edge while it fits the node budget.  If the
+                # next edge would cross the budget, retain the anchor and as
+                # many neighbors as fit, then stop expansion.  This preserves
+                # valid anchor/neighbor incidences without ever exceeding the
+                # configured sequence budget upstream.
+                if max_nodes is not None:
+                    remaining = max_nodes - len(nodes)
+                    if remaining <= 0:
+                        return HypergraphData.from_hyperedges(view, edges)
+                    edge_nodes = list(dict.fromkeys((anchor, *neighbors)))
+                    new_nodes = [node_id for node_id in edge_nodes if node_id not in nodes]
+                    if len(new_nodes) > remaining:
+                        accepted = set(nodes)
+                        edge_neighbors = []
+                        for node_id in edge_nodes:
+                            if node_id not in accepted and len(accepted) >= max_nodes:
+                                continue
+                            accepted.add(node_id)
+                            if node_id != anchor:
+                                edge_neighbors.append(node_id)
+                        edges.append((anchor, edge_neighbors))
+                        nodes = accepted
+                        visited.add(anchor)
+                        return HypergraphData.from_hyperedges(view, edges)
+                    nodes.update(edge_nodes)
                 edges.append((anchor, neighbors))
                 visited.add(anchor)
                 next_frontier.extend(neighbors)
+                if max_nodes is not None and len(nodes) >= max_nodes:
+                    return HypergraphData.from_hyperedges(view, edges)
             frontier = list(dict.fromkeys(next_frontier))
         return HypergraphData.from_hyperedges(view, edges)
 
