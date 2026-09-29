@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if ! ssh-add -l >/dev/null 2>&1; then
+  eval "$(ssh-agent -s)" >/dev/null
+fi
 source ~/lhf/init.sh
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$PROJECT_ROOT"
