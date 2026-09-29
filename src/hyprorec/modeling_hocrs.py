@@ -393,8 +393,11 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
     ):
         output = self.encode(input_ids, attention_mask, hypergraphs, **kwargs)
         hidden = output.hidden_states[-1]
-        pooled = (hidden * pooling_mask.to(hidden.dtype).unsqueeze(-1)).sum(dim=1)
-        pooled = pooled / pooling_mask.sum(dim=1, keepdim=True).to(hidden.dtype)
+        # DialoGPT runs in float16.  Accumulating a long sequence in float16
+        # can overflow even when each hidden state is finite, so pool in fp32.
+        mask = pooling_mask.to(device=hidden.device, dtype=torch.float32)
+        pooled = (hidden.float() * mask.unsqueeze(-1)).sum(dim=1)
+        pooled = pooled / mask.sum(dim=1, keepdim=True).clamp_min(1.0)
         scores = self.recommendation_head(pooled, self._feature_tables())
         loss = F.cross_entropy(scores, rec_labels) if rec_labels is not None else None
         return SequenceClassifierOutput(loss=loss, logits=scores)
