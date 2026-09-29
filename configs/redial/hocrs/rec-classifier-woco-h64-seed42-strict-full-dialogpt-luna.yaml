@@ -27,15 +27,15 @@ training:
   do_train: true
   do_eval: true
   do_predict: true
-  per_device_train_batch_size: 1
-  per_device_eval_batch_size: 1
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
   gradient_accumulation_steps: 2
   num_train_epochs: 5
   learning_rate: 0.0001
   weight_decay: 0.01
   lr_scheduler_type: constant
   eval_strategy: steps
-  eval_steps: 200
+  eval_steps: 1343
   save_strategy: steps
   save_steps: 200
   save_total_limit: 2
