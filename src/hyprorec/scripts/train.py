@@ -25,6 +25,7 @@ from ..modeling_hocrs import (
     load_backbone,
 )
 from ..processing_hocrs import HoCRSProcessor
+from .export_rec_predictions import export_split, load_metadata
 
 
 def _load_modality_tables(
@@ -125,6 +126,82 @@ def _save_provenance(output_dir, config_path, model_args, data_args, training_ar
         ),
         encoding="utf-8",
     )
+
+
+def _evaluate_saved_checkpoint(
+    checkpoint,
+    model_args,
+    data_args,
+    training_args,
+):
+    """Evaluate a freshly reloaded checkpoint through the export path.
+
+    The training-time model can differ from the serialized best checkpoint
+    after distributed training or best-model restoration.  Final metrics must
+    describe the artifact users will later load, so this deliberately builds a
+    fresh model and reuses the standalone recommendation evaluator.
+    """
+    checkpoint = Path(checkpoint).resolve()
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    tokenizer_path = (
+        checkpoint
+        if (checkpoint / "tokenizer.json").exists()
+        else Path(model_args.backbone_name_or_path)
+    )
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+    load_kwargs = {
+        "torch_dtype": torch.bfloat16 if device.type == "cuda" else torch.float32,
+        "low_cpu_mem_usage": True,
+    }
+    model = HoCRSRecommendationModel.from_pretrained(str(checkpoint), **load_kwargs)
+    model.to(device)
+    model.eval()
+    processor = HoCRSProcessor(
+        tokenizer=tokenizer,
+        num_prompt_tokens=model.config.num_prompt_tokens,
+    )
+    collator = HoCRSDataCollator(
+        processor,
+        task="recommendation",
+        max_history_tokens=data_args.max_history_tokens,
+        max_sequence_tokens=data_args.max_sequence_tokens,
+    )
+    dataset_path = Path(data_args.dataset_path)
+    table_path = Path(
+        data_args.hyperedge_table_path or dataset_path / "hyperedge_table.json"
+    )
+    hypergraph_table = HypergraphTable.from_json(table_path)
+    dataset_config = HoCRSDatasetConfig(
+        dataset_path=str(dataset_path),
+        hyperedge_table_path=str(table_path),
+        task="recommendation",
+        views=tuple(data_args.views),
+        topk=data_args.topk,
+        khop=data_args.khop,
+        max_hypergraph_nodes=data_args.max_hypergraph_nodes,
+    )
+    prediction_dir = (
+        Path(training_args.output_dir) / "predictions" / checkpoint.name
+    )
+    metrics = {}
+    for split, dataset_split in (("eval", "validation"), ("test", "test")):
+        dataset = HoCRSDataset(dataset_config, dataset_split, hypergraph_table)
+        metadata_split = "valid" if split == "eval" else "test"
+        split_metrics = export_split(
+            model=model,
+            dataset=dataset,
+            metadata=load_metadata(dataset_path, metadata_split),
+            collator=collator,
+            output_path=prediction_dir / f"{metadata_split}_top50.json",
+            batch_size=max(1, training_args.per_device_eval_batch_size),
+            num_workers=0,
+            device=device,
+        )
+        metrics[split] = {
+            f"{split}_{key}": value for key, value in split_metrics.items()
+        }
+        metrics[split][f"{split}_checkpoint"] = str(checkpoint)
+    return metrics
 
 
 class EvaluateAtEpochEndCallback(TrainerCallback):
@@ -251,10 +328,33 @@ def main() -> None:
             trainer._load_best_model()
         trainer.save_state()
         trainer.save_metrics("train", result.metrics)
-    if eval_dataset is not None:
-        trainer.save_metrics("eval", trainer.evaluate(metric_key_prefix="eval"))
-    if test_dataset is not None:
-        trainer.save_metrics("test", trainer.predict(test_dataset, metric_key_prefix="test").metrics)
+    if (
+        training_args.do_train
+        and model_args.task == "recommendation"
+        and trainer.state.best_model_checkpoint
+    ):
+        if trainer.is_world_process_zero():
+            trainer.optimizer = None
+            trainer.lr_scheduler = None
+            trainer.model_wrapped = None
+            trainer.model = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            saved_metrics = _evaluate_saved_checkpoint(
+                trainer.state.best_model_checkpoint,
+                model_args,
+                data_args,
+                training_args,
+            )
+            trainer.save_metrics("eval", saved_metrics["eval"])
+            trainer.save_metrics("test", saved_metrics["test"])
+    else:
+        if eval_dataset is not None:
+            trainer.save_metrics("eval", trainer.evaluate(metric_key_prefix="eval"))
+        if test_dataset is not None:
+            trainer.save_metrics(
+                "test", trainer.predict(test_dataset, metric_key_prefix="test").metrics
+            )
 
 
 if __name__ == "__main__":
