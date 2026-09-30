@@ -11,6 +11,23 @@ from .constants import GRAPH_VIEWS, MODALITIES
 ALL_GRAPH_VIEWS = (*GRAPH_VIEWS, "co")
 
 
+def canonical_feature_dims(
+    feature_dims: dict[str, int] | None,
+) -> dict[str, int]:
+    """Return feature dimensions in the semantic modality order.
+
+    The order is part of the recommendation-head ABI: the router's output
+    rows and the stacked view logits are positional.  ``PretrainedConfig``
+    serializes mappings with sorted JSON keys, so relying on dictionary
+    insertion order would silently permute a full-view router after reload.
+    """
+
+    values = dict(feature_dims or {})
+    names = [name for name in MODALITIES if name in values]
+    names.extend(sorted(name for name in values if name not in names))
+    return {name: values[name] for name in names}
+
+
 class HoCRSHypergraphConfig(PretrainedConfig):
     model_type = "hocrs_hypergraph"
 
@@ -129,7 +146,7 @@ class HoCRSConfig(PretrainedConfig):
         self.views = views
         self.co_feature_view = co_feature_view
         self.num_items = num_items
-        self.item_feature_dims = dict(item_feature_dims or {})
+        self.item_feature_dims = canonical_feature_dims(item_feature_dims)
         self.item_table_view = item_table_view
         self.grounding_checkpoint_path = grounding_checkpoint_path
         self.recommendation_hidden_dim = recommendation_hidden_dim
@@ -157,4 +174,9 @@ class HoCRSConfig(PretrainedConfig):
         return self.backbone_config
 
 
-__all__ = ["ALL_GRAPH_VIEWS", "HoCRSConfig", "HoCRSHypergraphConfig"]
+__all__ = [
+    "ALL_GRAPH_VIEWS",
+    "HoCRSConfig",
+    "HoCRSHypergraphConfig",
+    "canonical_feature_dims",
+]

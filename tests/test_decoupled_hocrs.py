@@ -168,10 +168,23 @@ def test_recommendation_heads_and_conversation_are_independent():
         output.loss.backward()
         assert model.soft_prompt_embeddings.weight.grad.abs().sum() > 0
         with tempfile.TemporaryDirectory() as directory:
+            model.eval()
+            reference_logits = model(
+                input_ids,
+                attention_mask=attention,
+                pooling_mask=attention.bool(),
+            ).logits
             model.save_pretrained(directory)
             restored = HoCRSRecommendationModel.from_pretrained(directory)
             assert restored.config.recommendation_head == head
             torch.testing.assert_close(restored.item_txt_feature_table, features["txt"])
+            restored.eval()
+            restored_logits = restored(
+                input_ids,
+                attention_mask=attention,
+                pooling_mask=attention.bool(),
+            ).logits
+            torch.testing.assert_close(restored_logits, reference_logits)
     dialogue = HoCRSConversationModel(config(p, task="conversation", views=()))
     labels = input_ids.clone()
     labels[:, :20] = -100

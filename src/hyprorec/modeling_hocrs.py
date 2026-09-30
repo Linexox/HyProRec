@@ -18,7 +18,7 @@ from transformers.modeling_outputs import (
 )
 from transformers.utils import ModelOutput
 
-from .configuration_hocrs import HoCRSConfig
+from .configuration_hocrs import HoCRSConfig, canonical_feature_dims
 
 
 def load_backbone(name_or_path: str) -> nn.Module:
@@ -176,6 +176,7 @@ class ItemTableHead(nn.Module):
         self.view_loss_weight = view_loss_weight
         self.use_balance_loss = use_balance_loss
         self.balance_loss_weight = balance_loss_weight
+        feature_dims = canonical_feature_dims(feature_dims)
         names = tuple(feature_dims) if item_view == "full" else (item_view,)
         self.names = names
         self.user_projects = nn.ModuleDict(
