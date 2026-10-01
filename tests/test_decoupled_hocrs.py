@@ -48,7 +48,12 @@ def processor():
 
 
 def config(
-    processor, task="recommendation", head="item_table", views=("txt",), item_view="txt"
+    processor,
+    task="recommendation",
+    head="item_table",
+    views=("txt",),
+    item_view="txt",
+    **kwargs,
 ):
     graph = HoCRSHypergraphConfig(
         input_dim=8, hidden_dim=16, output_dim=8, num_layers=2
@@ -74,6 +79,7 @@ def config(
         num_items=12,
         prompt_token_id=processor.get_token_id_map()["soft_prompt_token_id"],
         recommendation_hidden_dim=32,
+        **kwargs,
     )
 
 
@@ -219,6 +225,36 @@ def test_single_co_view_uses_chosen_modality_features():
     )
     output.loss.backward()
     assert model.hypergraph_projectors["co"].node_projector.weight.grad.abs().sum() > 0
+
+
+def test_fusion_bpr_loss_uses_fused_logits():
+    p = processor()
+    c = config(
+        p,
+        views=("txt", "img"),
+        item_view="full",
+        use_recommendation_bpr_loss=True,
+        recommendation_bpr_loss_weight=1.0,
+    )
+    model = HoCRSRecommendationModel(c)
+    features = {"txt": torch.randn(12, 8), "img": torch.randn(12, 8)}
+    model.initialize_feature_tables(features)
+    input_ids = torch.tensor(
+        [[p.get_token_id_map()["soft_prompt_token_id"]] * 20 + [2, 3, 4]]
+    )
+    output = model(
+        input_ids,
+        attention_mask=torch.ones_like(input_ids),
+        pooling_mask=torch.ones_like(input_ids).bool(),
+        rec_labels=torch.tensor([2]),
+    )
+    positive = output.logits[:, 2:3]
+    expected = torch.nn.functional.softplus(
+        output.logits - positive
+    ).masked_fill(torch.nn.functional.one_hot(torch.tensor([2]), 12).bool(), 0.0)
+    expected = expected.sum() / 11
+    assert output.bpr_loss is not None
+    torch.testing.assert_close(output.bpr_loss, expected)
 
 
 def test_grounding_has_four_semantic_and_four_co_towers():

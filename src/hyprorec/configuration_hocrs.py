@@ -100,6 +100,8 @@ class HoCRSConfig(PretrainedConfig):
         recommendation_hidden_dim: int = 2048,
         recommendation_temperature: float = 0.07,
         recommendation_view_loss_weight: float = 0.2,
+        use_recommendation_bpr_loss: bool = False,
+        recommendation_bpr_loss_weight: float = 0.0,
         use_recommendation_balance_loss: bool = False,
         recommendation_balance_loss_weight: float = 0.0,
         recommendation_router_hidden_dim: int = 512,
@@ -135,6 +137,12 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("recommendation_temperature must be positive.")
         if recommendation_view_loss_weight < 0:
             raise ValueError("recommendation_view_loss_weight must be non-negative.")
+        if recommendation_bpr_loss_weight < 0:
+            raise ValueError("recommendation_bpr_loss_weight must be non-negative.")
+        if use_recommendation_bpr_loss and recommendation_bpr_loss_weight <= 0:
+            raise ValueError(
+                "recommendation_bpr_loss_weight must be positive when BPR loss is enabled."
+            )
         if recommendation_balance_loss_weight < 0:
             raise ValueError("recommendation_balance_loss_weight must be non-negative.")
         if use_recommendation_balance_loss and recommendation_balance_loss_weight <= 0:
@@ -152,6 +160,8 @@ class HoCRSConfig(PretrainedConfig):
         self.recommendation_hidden_dim = recommendation_hidden_dim
         self.recommendation_temperature = recommendation_temperature
         self.recommendation_view_loss_weight = recommendation_view_loss_weight
+        self.use_recommendation_bpr_loss = use_recommendation_bpr_loss
+        self.recommendation_bpr_loss_weight = recommendation_bpr_loss_weight
         self.use_recommendation_balance_loss = use_recommendation_balance_loss
         self.recommendation_balance_loss_weight = recommendation_balance_loss_weight
         self.recommendation_router_hidden_dim = recommendation_router_hidden_dim

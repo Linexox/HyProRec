@@ -167,6 +167,8 @@ class ItemTableHead(nn.Module):
         temperature: float,
         router_hidden_dim: int,
         view_loss_weight: float,
+        use_bpr_loss: bool,
+        bpr_loss_weight: float,
         use_balance_loss: bool,
         balance_loss_weight: float,
     ) -> None:
@@ -174,6 +176,8 @@ class ItemTableHead(nn.Module):
         self.item_view = item_view
         self.temperature = temperature
         self.view_loss_weight = view_loss_weight
+        self.use_bpr_loss = use_bpr_loss
+        self.bpr_loss_weight = bpr_loss_weight
         self.use_balance_loss = use_balance_loss
         self.balance_loss_weight = balance_loss_weight
         feature_dims = canonical_feature_dims(feature_dims)
@@ -230,7 +234,7 @@ class ItemTableHead(nn.Module):
             stacked_logits * route_weights.to(stacked_logits.dtype).unsqueeze(-1)
         ).sum(dim=1)
 
-        fusion_loss = view_loss = balance_loss = None
+        fusion_loss = view_loss = bpr_loss = balance_loss = None
         loss = None
         if labels is not None:
             fusion_loss = F.cross_entropy(fusion_logits, labels)
@@ -241,6 +245,17 @@ class ItemTableHead(nn.Module):
                 if len(self.names) > 1
                 else fusion_loss.new_zeros(())
             )
+            if self.use_bpr_loss:
+                positive = fusion_logits.gather(1, labels.unsqueeze(1))
+                pairwise = F.softplus(fusion_logits - positive)
+                pairwise = pairwise.masked_fill(
+                    F.one_hot(labels, num_classes=fusion_logits.size(-1)).bool(), 0.0
+                )
+                bpr_loss = pairwise.sum(dim=1).mean() / max(
+                    1, fusion_logits.size(-1) - 1
+                )
+            else:
+                bpr_loss = fusion_logits.new_zeros(())
             if self.use_balance_loss:
                 mean_route = route_weights.float().mean(dim=0).clamp_min(1e-8)
                 balance_loss = (
@@ -249,6 +264,8 @@ class ItemTableHead(nn.Module):
             else:
                 balance_loss = fusion_logits.new_zeros(())
             loss = fusion_loss + self.view_loss_weight * view_loss
+            if self.use_bpr_loss:
+                loss = loss + self.bpr_loss_weight * bpr_loss
             if self.use_balance_loss:
                 loss = loss + self.balance_loss_weight * balance_loss
 
@@ -257,6 +274,7 @@ class ItemTableHead(nn.Module):
             loss=loss,
             fusion_loss=fusion_loss,
             view_loss=view_loss,
+            bpr_loss=bpr_loss,
             balance_loss=balance_loss,
             route_weights=route_weights,
             view_logits=view_logits,
@@ -271,6 +289,7 @@ class RecommendationHeadOutput(ModelOutput):
     logits: torch.Tensor | None = None
     fusion_loss: torch.Tensor | None = None
     view_loss: torch.Tensor | None = None
+    bpr_loss: torch.Tensor | None = None
     balance_loss: torch.Tensor | None = None
     route_weights: torch.Tensor | None = None
     view_logits: tuple[torch.Tensor, ...] | None = None
@@ -282,6 +301,7 @@ class HoCRSRecommendationOutput(SequenceClassifierOutput):
 
     fusion_loss: torch.Tensor | None = None
     view_loss: torch.Tensor | None = None
+    bpr_loss: torch.Tensor | None = None
     balance_loss: torch.Tensor | None = None
     route_weights: torch.Tensor | None = None
     view_logits: tuple[torch.Tensor, ...] | None = None
@@ -298,6 +318,8 @@ class RecommendationHead(nn.Module):
             config.recommendation_temperature,
             config.recommendation_router_hidden_dim,
             config.recommendation_view_loss_weight,
+            config.use_recommendation_bpr_loss,
+            config.recommendation_bpr_loss_weight,
             config.use_recommendation_balance_loss,
             config.recommendation_balance_loss_weight,
         )
@@ -505,6 +527,7 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
             attentions=output.attentions,
             fusion_loss=recommendation.fusion_loss,
             view_loss=recommendation.view_loss,
+            bpr_loss=recommendation.bpr_loss,
             balance_loss=recommendation.balance_loss,
             route_weights=recommendation.route_weights,
             view_logits=recommendation.view_logits,

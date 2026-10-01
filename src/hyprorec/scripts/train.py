@@ -87,6 +87,8 @@ def _build_model(
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
         recommendation_temperature=model_args.recommendation_temperature,
         recommendation_view_loss_weight=model_args.recommendation_view_loss_weight,
+        use_recommendation_bpr_loss=model_args.use_recommendation_bpr_loss,
+        recommendation_bpr_loss_weight=model_args.recommendation_bpr_loss_weight,
         use_recommendation_balance_loss=model_args.use_recommendation_balance_loss,
         recommendation_balance_loss_weight=model_args.recommendation_balance_loss_weight,
         recommendation_router_hidden_dim=model_args.recommendation_router_hidden_dim,

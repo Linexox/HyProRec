@@ -33,6 +33,8 @@ class ModelArguments:
     recommendation_hidden_dim: int = 2048
     recommendation_temperature: float = 0.07
     recommendation_view_loss_weight: float = 0.2
+    use_recommendation_bpr_loss: bool = False
+    recommendation_bpr_loss_weight: float = 0.0
     use_recommendation_balance_loss: bool = False
     recommendation_balance_loss_weight: float = 0.0
     recommendation_router_hidden_dim: int = 512
@@ -52,8 +54,16 @@ class ModelArguments:
             )
         if self.recommendation_router_hidden_dim < 1:
             raise ValueError("recommendation_router_hidden_dim must be positive.")
-        if self.recommendation_view_loss_weight < 0 or self.recommendation_balance_loss_weight < 0:
+        if (
+            self.recommendation_view_loss_weight < 0
+            or self.recommendation_bpr_loss_weight < 0
+            or self.recommendation_balance_loss_weight < 0
+        ):
             raise ValueError("Recommendation loss weights must be non-negative.")
+        if self.use_recommendation_bpr_loss and self.recommendation_bpr_loss_weight <= 0:
+            raise ValueError(
+                "recommendation_bpr_loss_weight must be positive when BPR loss is enabled."
+            )
         if self.use_recommendation_balance_loss and self.recommendation_balance_loss_weight <= 0:
             raise ValueError("Balance loss weight must be positive when enabled.")
 
