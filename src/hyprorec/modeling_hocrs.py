@@ -162,7 +162,9 @@ class ViewAttentionPooling(nn.Module):
         self.output = nn.Linear(attention_dim, hidden_size, bias=False)
 
     def forward(
-        self, hidden: torch.Tensor, pooling_mask: torch.Tensor
+        self,
+        hidden: torch.Tensor,
+        pooling_mask: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         hidden = hidden.float()
         mask = pooling_mask.to(device=hidden.device, dtype=torch.bool)
@@ -203,28 +205,22 @@ class ItemTableHead(nn.Module):
         feature_dims = canonical_feature_dims(feature_dims)
         names = tuple(feature_dims) if item_view == "full" else (item_view,)
         self.names = names
-        self.attention_poolers = nn.ModuleDict(
-            {
-                name: ViewAttentionPooling(input_dim, attention_dim)
-                for name in names
-            }
-        )
-        self.user_projects = nn.ModuleDict(
-            {
-                name: nn.Sequential(
-                    nn.Linear(input_dim, output_dim),
-                    nn.GELU(),
-                    nn.Linear(output_dim, output_dim),
-                )
-                for name in names
-            }
-        )
-        self.item_projects = nn.ModuleDict(
-            {
-                name: nn.Linear(feature_dims[name], output_dim, bias=False)
-                for name in names
-            }
-        )
+        self.attention_poolers = nn.ModuleDict({
+            name: ViewAttentionPooling(input_dim, attention_dim)
+            for name in names
+        })
+        self.user_projects = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.Linear(input_dim, output_dim),
+                nn.GELU(),
+                nn.Linear(output_dim, output_dim),
+            )
+            for name in names
+        })
+        self.item_projects = nn.ModuleDict({
+            name: nn.Linear(feature_dims[name], output_dim, bias=False)
+            for name in names
+        })
         self.router = nn.Sequential(
             nn.Linear(output_dim * len(names), router_hidden_dim),
             nn.GELU(),
@@ -234,7 +230,8 @@ class ItemTableHead(nn.Module):
     def item_embeddings(self, features: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {
             name: F.normalize(
-                self.item_projects[name](features[name].float()), dim=-1
+                self.item_projects[name](features[name].float()),
+                dim=-1
             )
             for name in self.names
         }
@@ -250,12 +247,8 @@ class ItemTableHead(nn.Module):
         attention_weights = {}
         users = {}
         for name in self.names:
-            pooled[name], attention_weights[name] = self.attention_poolers[name](
-                hidden, pooling_mask
-            )
-            users[name] = F.normalize(
-                self.user_projects[name](pooled[name].float()), dim=-1
-            )
+            pooled[name], attention_weights[name] = self.attention_poolers[name](hidden, pooling_mask)
+            users[name] = F.normalize(self.user_projects[name](pooled[name].float()), dim=-1)
         items = self.item_embeddings(features)
         view_logits = tuple(
             users[name] @ items[name].t() / self.temperature for name in self.names
