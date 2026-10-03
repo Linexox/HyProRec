@@ -31,26 +31,32 @@ class ModelArguments:
     item_table_view: str = "txt"
     co_feature_view: str = "txt"
     recommendation_hidden_dim: int = 2048
+    recommendation_attention_dim: int = 256
     recommendation_temperature: float = 0.07
     recommendation_view_loss_weight: float = 0.2
     use_recommendation_bpr_loss: bool = False
     recommendation_bpr_loss_weight: float = 0.0
     use_recommendation_balance_loss: bool = False
     recommendation_balance_loss_weight: float = 0.0
+    conversation_loss_weight: float = 1.0
     recommendation_router_hidden_dim: int = 512
 
     def __post_init__(self) -> None:
-        if self.task not in {"recommendation", "conversation"}:
-            raise ValueError("task must be recommendation or conversation.")
+        if self.task not in {"recommendation", "conversation", "joint"}:
+            raise ValueError("task must be recommendation, conversation, or joint.")
         if self.recommendation_head != "item_table":
             raise ValueError("Only the item_table recommendation head is supported.")
         if self.item_table_view not in (*MODALITIES, "full"):
             raise ValueError("item_table_view must be a modality or full.")
         if self.co_feature_view not in MODALITIES:
             raise ValueError(f"co_feature_view must be one of {MODALITIES}.")
-        if self.num_prompt_tokens != 20 or self.recommendation_hidden_dim < 1:
+        if (
+            self.num_prompt_tokens != 20
+            or self.recommendation_hidden_dim < 1
+            or self.recommendation_attention_dim < 1
+        ):
             raise ValueError(
-                "num_prompt_tokens must be 20 and recommendation_hidden_dim positive."
+                "num_prompt_tokens must be 20 and recommendation dimensions positive."
             )
         if self.recommendation_router_hidden_dim < 1:
             raise ValueError("recommendation_router_hidden_dim must be positive.")
@@ -66,6 +72,8 @@ class ModelArguments:
             )
         if self.use_recommendation_balance_loss and self.recommendation_balance_loss_weight <= 0:
             raise ValueError("Balance loss weight must be positive when enabled.")
+        if self.conversation_loss_weight < 0:
+            raise ValueError("conversation_loss_weight must be non-negative.")
 
 
 @dataclass

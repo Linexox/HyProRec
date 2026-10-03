@@ -85,6 +85,56 @@ def recommendation_metrics(
     return metrics
 
 
+def conversation_teacher_forcing_texts(
+    logits,
+    labels,
+    tokenizer,
+) -> tuple[list[str], list[str], int]:
+    """Decode teacher-forced predictions and references for one batch."""
+
+    token_predictions = logits[:, :-1].argmax(dim=-1).detach().cpu()
+    shifted_labels = labels[:, 1:].detach().cpu()
+    references = []
+    hypotheses = []
+    token_count = 0
+    for predicted, target in zip(token_predictions, shifted_labels):
+        mask = target != -100
+        token_count += int(mask.sum())
+        references.append(tokenizer.decode(target[mask].tolist(), skip_special_tokens=True))
+        hypotheses.append(
+            tokenizer.decode(predicted[mask].tolist(), skip_special_tokens=True)
+        )
+    return references, hypotheses, token_count
+
+
+def conversation_teacher_forcing_metrics(
+    logits,
+    labels,
+    tokenizer,
+) -> dict[str, float]:
+    """Compute response metrics from teacher-forced next-token logits."""
+
+    references, hypotheses, token_count = conversation_teacher_forcing_texts(
+        logits, labels, tokenizer
+    )
+    metrics = {
+        f"bleu@{n}": _bleu(references, hypotheses, n) for n in range(1, 5)
+    }
+    metrics.update({f"dist@{n}": _distinct(hypotheses, n) for n in range(1, 5)})
+    metrics["response_tokens"] = float(token_count)
+    return metrics
+
+
+def conversation_teacher_forcing_metrics_from_texts(
+    references: Sequence[str], hypotheses: Sequence[str]
+) -> dict[str, float]:
+    """Compute response metrics after aggregating decoded split outputs."""
+
+    metrics = {f"bleu@{n}": _bleu(references, hypotheses, n) for n in range(1, 5)}
+    metrics.update({f"dist@{n}": _distinct(hypotheses, n) for n in range(1, 5)})
+    return metrics
+
+
 def preprocess_logits_for_metrics(task: str):
     def process(logits, _labels):
         scores = logits[0] if isinstance(logits, tuple) else logits
@@ -124,6 +174,9 @@ def build_compute_metrics(processor, task: str = "recommendation") -> callable:
 
 __all__ = [
     "build_compute_metrics",
+    "conversation_teacher_forcing_metrics",
+    "conversation_teacher_forcing_metrics_from_texts",
+    "conversation_teacher_forcing_texts",
     "preprocess_logits_for_metrics",
     "recommendation_metrics",
 ]

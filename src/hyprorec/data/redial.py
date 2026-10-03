@@ -1,4 +1,4 @@
-"""Turn-level ReDial samples for independent recommendation and conversation tasks."""
+"""Turn-level ReDial samples for recommendation, conversation, and joint tasks."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ class HoCRSDatasetConfig:
     max_hypergraph_nodes: int | None = 64
 
     def __post_init__(self) -> None:
-        if self.task not in {"recommendation", "conversation"}:
-            raise ValueError("task must be recommendation or conversation.")
+        if self.task not in {"recommendation", "conversation", "joint"}:
+            raise ValueError("task must be recommendation, conversation, or joint.")
         if set(self.views) - set(ALL_GRAPH_VIEWS):
             raise ValueError("Unknown graph view.")
         if not 0 <= self.topk <= 10 or self.khop < 1:
@@ -160,7 +160,7 @@ class HoCRSDataCollator:
                 for view, graph in sample["hypergraphs"].items()
             }
             prompt = self.processor.build_prompt(context, sizes)
-            if self.task == "conversation":
+            if self.task in {"conversation", "joint"}:
                 prompt += f"\n{sample['role']}:"
             prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
             response_ids = (
@@ -168,7 +168,7 @@ class HoCRSDataCollator:
                     sample["response"] + (tokenizer.eos_token or ""),
                     add_special_tokens=False,
                 )["input_ids"]
-                if self.task == "conversation"
+                if self.task in {"conversation", "joint"}
                 else []
             )
             prompts.append({"input_ids": prompt_ids + response_ids})
@@ -188,6 +188,8 @@ class HoCRSDataCollator:
         ):
             rows = [sample["hypergraphs"].get(view) for sample in features]
             graphs = [graph for graph in rows if graph is not None]
+            if not graphs:
+                continue
             graph = batch_hypergraphs(graphs)
             graph["node_positions"] = self._positions(
                 input_ids,
@@ -211,12 +213,16 @@ class HoCRSDataCollator:
                 "hypergraphs": hypergraphs,
             }
         )
-        if self.task == "recommendation":
-            batch["pooling_mask"] = encoded["attention_mask"].bool()
+        if self.task in {"recommendation", "joint"}:
+            pooling_mask = encoded["attention_mask"].bool()
+            if self.task == "joint":
+                for row, length in enumerate(prompt_lengths):
+                    pooling_mask[row, length:] = False
+            batch["pooling_mask"] = pooling_mask
             batch["rec_labels"] = torch.tensor(
                 [sample["target_item_id"] for sample in features], dtype=torch.long
             )
-        else:
+        if self.task in {"conversation", "joint"}:
             labels = input_ids.clone()
             labels[encoded["attention_mask"] == 0] = -100
             for row, length in enumerate(prompt_lengths):

@@ -89,8 +89,14 @@ def export_split(
             enabled=device.type == "cuda",
         ):
             output = model(**batch, use_cache=False)
-        topk = min(50, output.logits.size(-1))
-        scores, indices = output.logits.topk(topk, dim=-1)
+            recommendation_logits = getattr(output, "recommendation_logits", None)
+            scores_source = (
+                recommendation_logits
+                if recommendation_logits is not None
+                else output.logits
+            )
+            topk = min(50, scores_source.size(-1))
+        scores, indices = scores_source.topk(topk, dim=-1)
         offset = len(rows)
         for row_index, (row_scores, row_indices) in enumerate(zip(scores, indices)):
             row = dict(metadata[offset + row_index])

@@ -1,10 +1,11 @@
-"""Decoupled recommendation and conversation models for HyProRec."""
+"""Hypergraph-prompted recommendation with optional teacher-forced dialogue loss."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from math import log
 from pathlib import Path
+import re
 from typing import Mapping
 
 import torch
@@ -58,9 +59,7 @@ def hypergraph_propagate(
 ) -> HypergraphEncoderOutput:
     node_index, edge_index = hyperedge_index
     dtype = node_features.dtype
-    node_degree = torch.bincount(node_index, minlength=node_features.size(0)).to(
-        dtype=dtype
-    )
+    node_degree = torch.bincount(node_index, minlength=node_features.size(0)).to(dtype=dtype)
     edge_degree = torch.bincount(edge_index, minlength=num_hyperedges).to(dtype=dtype)
     node_scale = node_degree.clamp_min(1).pow(-0.5)
     edge_scale = edge_degree.clamp_min(1).reciprocal()
@@ -140,21 +139,41 @@ class GraphTokenMoE(nn.Module):
             nn.init.zeros_(expert[-1].bias)
 
     def forward(self, features: torch.Tensor, view: str) -> torch.Tensor:
-        view_embedding = self.view_embeddings[self.view_to_index[view]].expand(
-            features.size(0), -1
-        )
-        weights = F.softmax(
-            self.router(
-                torch.cat((features, view_embedding.to(features.dtype)), dim=-1).float()
-            ),
-            dim=-1,
-        )
+        view_embedding = self.view_embeddings[self.view_to_index[view]].expand(features.size(0), -1)
+        router_input = torch.cat((features, view_embedding.to(features.dtype)), dim=-1).float()
+        weights = F.softmax(self.router(router_input), dim=-1)
         outputs = torch.stack([expert(features) for expert in self.experts], dim=1)
         delta = (weights.to(outputs.dtype).unsqueeze(-1) * outputs).sum(dim=1)
         return (
             features
             + self.residual_scales[self.view_to_index[view]].to(features.dtype) * delta
         )
+
+
+class ViewAttentionPooling(nn.Module):
+    """Attend to backbone tokens using a learned token for this view."""
+
+    def __init__(self, hidden_size: int, attention_dim: int) -> None:
+        super().__init__()
+        self.attention_view_token = nn.Parameter(torch.randn(hidden_size) * 0.02)
+        self.query = nn.Linear(hidden_size, attention_dim, bias=False)
+        self.key = nn.Linear(hidden_size, attention_dim, bias=False)
+        self.value = nn.Linear(hidden_size, attention_dim, bias=False)
+        self.output = nn.Linear(attention_dim, hidden_size, bias=False)
+
+    def forward(
+        self, hidden: torch.Tensor, pooling_mask: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden = hidden.float()
+        mask = pooling_mask.to(device=hidden.device, dtype=torch.bool)
+        query = self.query(self.attention_view_token.float())
+        keys = self.key(hidden)
+        values = self.value(hidden)
+        scores = (query * keys).sum(dim=-1) / (keys.size(-1) ** 0.5)
+        scores = scores.masked_fill(~mask, torch.finfo(scores.dtype).min)
+        weights = scores.softmax(dim=-1)
+        attended = (weights.unsqueeze(-1) * values).sum(dim=1)
+        return self.output(attended), weights
 
 
 class ItemTableHead(nn.Module):
@@ -164,6 +183,7 @@ class ItemTableHead(nn.Module):
         feature_dims: dict[str, int],
         item_view: str,
         output_dim: int,
+        attention_dim: int,
         temperature: float,
         router_hidden_dim: int,
         view_loss_weight: float,
@@ -183,6 +203,12 @@ class ItemTableHead(nn.Module):
         feature_dims = canonical_feature_dims(feature_dims)
         names = tuple(feature_dims) if item_view == "full" else (item_view,)
         self.names = names
+        self.attention_poolers = nn.ModuleDict(
+            {
+                name: ViewAttentionPooling(input_dim, attention_dim)
+                for name in names
+            }
+        )
         self.user_projects = nn.ModuleDict(
             {
                 name: nn.Sequential(
@@ -215,14 +241,21 @@ class ItemTableHead(nn.Module):
 
     def forward(
         self,
-        pooled: torch.Tensor,
+        hidden: torch.Tensor,
+        pooling_mask: torch.Tensor,
         features: Mapping[str, torch.Tensor],
         labels: torch.Tensor | None = None,
     ) -> "RecommendationHeadOutput":
-        users = {
-            name: F.normalize(self.user_projects[name](pooled.float()), dim=-1)
-            for name in self.names
-        }
+        pooled = {}
+        attention_weights = {}
+        users = {}
+        for name in self.names:
+            pooled[name], attention_weights[name] = self.attention_poolers[name](
+                hidden, pooling_mask
+            )
+            users[name] = F.normalize(
+                self.user_projects[name](pooled[name].float()), dim=-1
+            )
         items = self.item_embeddings(features)
         view_logits = tuple(
             users[name] @ items[name].t() / self.temperature for name in self.names
@@ -278,6 +311,7 @@ class ItemTableHead(nn.Module):
             balance_loss=balance_loss,
             route_weights=route_weights,
             view_logits=view_logits,
+            attention_weights=attention_weights,
         )
 
 
@@ -293,39 +327,24 @@ class RecommendationHeadOutput(ModelOutput):
     balance_loss: torch.Tensor | None = None
     route_weights: torch.Tensor | None = None
     view_logits: tuple[torch.Tensor, ...] | None = None
+    attention_weights: dict[str, torch.Tensor] | None = None
 
 
 @dataclass
 class HoCRSRecommendationOutput(SequenceClassifierOutput):
-    """Trainer-compatible output with per-view recommendation diagnostics."""
+    """Recommendation output, optionally carrying teacher-forced LM outputs."""
+
+    recommendation_logits: torch.Tensor | None = None
 
     fusion_loss: torch.Tensor | None = None
     view_loss: torch.Tensor | None = None
     bpr_loss: torch.Tensor | None = None
     balance_loss: torch.Tensor | None = None
+    conversation_loss: torch.Tensor | None = None
+    conversation_logits: torch.Tensor | None = None
     route_weights: torch.Tensor | None = None
     view_logits: tuple[torch.Tensor, ...] | None = None
-
-
-class RecommendationHead(nn.Module):
-    def __init__(self, input_dim: int, config: HoCRSConfig) -> None:
-        super().__init__()
-        self.head = ItemTableHead(
-            input_dim,
-            config.item_feature_dims,
-            config.item_table_view,
-            config.recommendation_hidden_dim,
-            config.recommendation_temperature,
-            config.recommendation_router_hidden_dim,
-            config.recommendation_view_loss_weight,
-            config.use_recommendation_bpr_loss,
-            config.recommendation_bpr_loss_weight,
-            config.use_recommendation_balance_loss,
-            config.recommendation_balance_loss_weight,
-        )
-
-    def forward(self, pooled, features, labels=None):
-        return self.head(pooled, features, labels)
+    attention_weights: dict[str, torch.Tensor] | None = None
 
 
 class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
@@ -333,6 +352,24 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
     base_model_prefix = "backbone"
     supports_gradient_checkpointing = True
     accepts_loss_kwargs = False
+
+    @classmethod
+    def _fix_state_dict_key_on_load(cls, key: str) -> tuple[str, bool]:
+        key, changed = super()._fix_state_dict_key_on_load(key)
+        key, count = re.subn(
+            r"^recommendation_head\.head\.(.*)$", r"recommendation_head.\1", key
+        )
+        return key, changed or count > 0
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        """Load pre-cleanup checkpoints whose head had one redundant wrapper."""
+
+        remapped = state_dict.copy()
+        prefix = "recommendation_head.head."
+        for key in list(remapped):
+            if key.startswith(prefix):
+                remapped[key.removeprefix(prefix)] = remapped.pop(key)
+        return super().load_state_dict(remapped, strict=strict, assign=assign)
 
     def __init__(self, config: HoCRSConfig, backbone: nn.Module | None = None) -> None:
         super().__init__(config)
@@ -350,7 +387,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         # checkpoint/API compatibility.  Recommendation reads the separate
         # ``item_*_feature_table`` buffers below, so the two paths remain
         # independent despite identical initialization values.
-        if config.task == "recommendation":
+        if config.task in {"recommendation", "joint"}:
             needed.update(config.item_feature_dims)
         for view in needed:
             self.register_buffer(
@@ -358,7 +395,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
                 torch.zeros(config.num_items, config.item_feature_dims[view]),
                 persistent=True,
             )
-        if config.task == "recommendation":
+        if config.task in {"recommendation", "joint"}:
             for view in config.item_feature_dims:
                 self.register_buffer(
                     f"item_{view}_feature_table",
@@ -497,8 +534,19 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
 class HoCRSRecommendationModel(HoCRSBaseModel):
     def __init__(self, config, backbone=None):
         super().__init__(config, backbone)
-        self.recommendation_head = RecommendationHead(
-            _hidden_size(config.backbone_config), config
+        self.recommendation_head = ItemTableHead(
+            _hidden_size(config.backbone_config),
+            config.item_feature_dims,
+            config.item_table_view,
+            config.recommendation_hidden_dim,
+            config.recommendation_attention_dim,
+            config.recommendation_temperature,
+            config.recommendation_router_hidden_dim,
+            config.recommendation_view_loss_weight,
+            config.use_recommendation_bpr_loss,
+            config.recommendation_bpr_loss_weight,
+            config.use_recommendation_balance_loss,
+            config.recommendation_balance_loss_weight,
         )
 
     def forward(
@@ -507,30 +555,42 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
         attention_mask=None,
         pooling_mask=None,
         rec_labels=None,
+        labels=None,
         hypergraphs=None,
         **kwargs,
     ):
-        output = self.encode(input_ids, attention_mask, hypergraphs, **kwargs)
-        hidden = output.hidden_states[-1]
-        # DialoGPT runs in float16.  Accumulating a long sequence in float16
-        # can overflow even when each hidden state is finite, so pool in fp32.
-        mask = pooling_mask.to(device=hidden.device, dtype=torch.float32)
-        pooled = (hidden.float() * mask.unsqueeze(-1)).sum(dim=1)
-        pooled = pooled / mask.sum(dim=1, keepdim=True).clamp_min(1.0)
-        recommendation = self.recommendation_head(
-            pooled, self._feature_tables(), labels=rec_labels
+        output = self.encode(
+            input_ids,
+            attention_mask,
+            hypergraphs,
+            labels=labels,
+            **kwargs,
         )
+        hidden = output.hidden_states[-1]
+        if pooling_mask is None:
+            pooling_mask = attention_mask.bool()
+        recommendation = self.recommendation_head(
+            hidden, pooling_mask, self._feature_tables(), labels=rec_labels
+        )
+        zero = hidden.new_zeros(())
+        recommendation_loss = recommendation.loss if recommendation.loss is not None else zero
+        conversation_loss = output.loss if output.loss is not None else zero
+        loss = recommendation_loss + self.config.conversation_loss_weight * conversation_loss
         return HoCRSRecommendationOutput(
-            loss=recommendation.loss,
+            loss=loss,
             logits=recommendation.logits,
+            recommendation_logits=recommendation.logits,
             hidden_states=output.hidden_states,
             attentions=output.attentions,
             fusion_loss=recommendation.fusion_loss,
             view_loss=recommendation.view_loss,
             bpr_loss=recommendation.bpr_loss,
             balance_loss=recommendation.balance_loss,
+            conversation_loss=output.loss,
+            conversation_logits=output.logits,
             route_weights=recommendation.route_weights,
             view_logits=recommendation.view_logits,
+            attention_weights=recommendation.attention_weights,
         )
 
 
@@ -557,7 +617,7 @@ __all__ = [
     "HypergraphProjector",
     "GraphTokenMoE",
     "ItemTableHead",
-    "RecommendationHead",
+    "ViewAttentionPooling",
     "RecommendationHeadOutput",
     "HoCRSRecommendationOutput",
     "hypergraph_propagate",

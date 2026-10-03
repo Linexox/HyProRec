@@ -1,4 +1,4 @@
-"""Train one independent HyProRec task per invocation."""
+"""Train the HyProRec recommendation model, optionally with dialogue loss."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
+from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, Trainer, TrainerCallback, set_seed
 from transformers.trainer_utils import get_last_checkpoint
 
@@ -18,7 +19,13 @@ from ..configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
 from ..constants import MODALITIES
 from ..data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
 from ..data.hypergraph import HypergraphTable
-from ..metrics import build_compute_metrics, preprocess_logits_for_metrics
+from ..metrics import (
+    build_compute_metrics,
+    conversation_teacher_forcing_metrics_from_texts,
+    conversation_teacher_forcing_texts,
+    preprocess_logits_for_metrics,
+    recommendation_metrics,
+)
 from ..modeling_hocrs import (
     HoCRSConversationModel,
     HoCRSRecommendationModel,
@@ -41,7 +48,7 @@ def _load_modality_tables(
     )
     needed = graph_views | (
         item_views
-        if model_args.task == "recommendation"
+        if model_args.task in {"recommendation", "joint"}
         and model_args.recommendation_head == "item_table"
         else set()
     )
@@ -85,23 +92,27 @@ def _build_model(
         item_table_view=model_args.item_table_view,
         grounding_checkpoint_path=model_args.grounding_checkpoint_path,
         recommendation_hidden_dim=model_args.recommendation_hidden_dim,
+        recommendation_attention_dim=model_args.recommendation_attention_dim,
         recommendation_temperature=model_args.recommendation_temperature,
         recommendation_view_loss_weight=model_args.recommendation_view_loss_weight,
         use_recommendation_bpr_loss=model_args.use_recommendation_bpr_loss,
         recommendation_bpr_loss_weight=model_args.recommendation_bpr_loss_weight,
         use_recommendation_balance_loss=model_args.use_recommendation_balance_loss,
         recommendation_balance_loss_weight=model_args.recommendation_balance_loss_weight,
+        conversation_loss_weight=model_args.conversation_loss_weight,
         recommendation_router_hidden_dim=model_args.recommendation_router_hidden_dim,
         num_prompt_tokens=model_args.num_prompt_tokens,
         freeze_backbone=model_args.freeze_backbone,
         prompt_token_id=processor.get_token_id_map()["soft_prompt_token_id"],
         **{f"{view}_hypergraph_config": value for view, value in graph_configs.items()},
     )
-    model_class = (
-        HoCRSRecommendationModel
-        if model_args.task == "recommendation"
-        else HoCRSConversationModel
-    )
+    model_class = {
+        "recommendation": HoCRSRecommendationModel,
+        "conversation": HoCRSConversationModel,
+        # Joint is a data/loss mode of the recommendation model, not a
+        # separate architecture branch.
+        "joint": HoCRSRecommendationModel,
+    }[model_args.task]
     model = model_class(config, backbone=backbone)
     if model_args.grounding_checkpoint_path:
         model.load_grounding_checkpoint(model_args.grounding_checkpoint_path)
@@ -130,18 +141,102 @@ def _save_provenance(output_dir, config_path, model_args, data_args, training_ar
     )
 
 
+@torch.inference_mode()
+def _evaluate_joint_split(
+    model,
+    dataset,
+    metadata,
+    collator,
+    output_path,
+    batch_size,
+    device,
+    tokenizer,
+):
+    """Evaluate recommendation and teacher-forced dialogue in one pass."""
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=collator,
+        pin_memory=device.type == "cuda",
+    )
+    recommendations = []
+    targets = []
+    rows = []
+    references = []
+    hypotheses = []
+    response_tokens = 0
+    conversation_loss_total = 0.0
+    model.eval()
+    for batch in loader:
+        batch = batch.to(device, non_blocking=device.type == "cuda")
+        with torch.autocast(
+            device_type=device.type,
+            dtype=torch.bfloat16,
+            enabled=device.type == "cuda",
+        ):
+            output = model(**batch, use_cache=False)
+        scores_source = output.recommendation_logits
+        scores, indices = scores_source.topk(
+            min(50, scores_source.size(-1)), dim=-1
+        )
+        recommendation_batch = indices.cpu().tolist()
+        target_batch = batch["rec_labels"].cpu().tolist()
+        recommendations.extend(recommendation_batch)
+        targets.extend(target_batch)
+        batch_references, batch_hypotheses, batch_tokens = (
+            conversation_teacher_forcing_texts(
+                output.conversation_logits, batch["labels"], tokenizer
+            )
+        )
+        references.extend(batch_references)
+        hypotheses.extend(batch_hypotheses)
+        response_tokens += batch_tokens
+        if output.conversation_loss is not None:
+            conversation_loss_total += float(output.conversation_loss) * batch_tokens
+        offset = len(rows)
+        for row_index, (row_scores, row_indices) in enumerate(
+            zip(scores, indices)
+        ):
+            row = dict(metadata[offset + row_index])
+            row["top50"] = [int(item_id) for item_id in row_indices.cpu().tolist()]
+            row["top50_scores"] = [
+                float(score) for score in row_scores.float().cpu().tolist()
+            ]
+            rows.append(row)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    metrics = recommendation_metrics(recommendations, targets)
+    metrics.update(
+        conversation_teacher_forcing_metrics_from_texts(references, hypotheses)
+    )
+    metrics["conv_loss"] = (
+        conversation_loss_total / response_tokens if response_tokens else 0.0
+    )
+    metrics["conv_ppl"] = math.exp(min(20.0, metrics["conv_loss"]))
+    metrics["response_tokens"] = response_tokens
+    metrics["samples"] = len(rows)
+    metrics["source"] = str(output_path.resolve())
+    return metrics
+
+
 def _evaluate_saved_checkpoint(
     checkpoint,
     model_args,
     data_args,
     training_args,
 ):
-    """Evaluate a freshly reloaded checkpoint through the export path.
+    """Evaluate a freshly reloaded checkpoint through the final export path.
 
     The training-time model can differ from the serialized best checkpoint
     after distributed training or best-model restoration.  Final metrics must
     describe the artifact users will later load, so this deliberately builds a
-    fresh model and reuses the standalone recommendation evaluator.
+    fresh model and evaluates recommendation plus teacher-forced dialogue.
     """
     checkpoint = Path(checkpoint).resolve()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -162,9 +257,10 @@ def _evaluate_saved_checkpoint(
         tokenizer=tokenizer,
         num_prompt_tokens=model.config.num_prompt_tokens,
     )
+    evaluation_task = model_args.task
     collator = HoCRSDataCollator(
         processor,
-        task="recommendation",
+        task=evaluation_task,
         max_history_tokens=data_args.max_history_tokens,
         max_sequence_tokens=data_args.max_sequence_tokens,
     )
@@ -176,7 +272,7 @@ def _evaluate_saved_checkpoint(
     dataset_config = HoCRSDatasetConfig(
         dataset_path=str(dataset_path),
         hyperedge_table_path=str(table_path),
-        task="recommendation",
+        task=evaluation_task,
         views=tuple(data_args.views),
         topk=data_args.topk,
         khop=data_args.khop,
@@ -186,19 +282,32 @@ def _evaluate_saved_checkpoint(
         Path(training_args.output_dir) / "predictions" / checkpoint.name
     )
     metrics = {}
-    for split, dataset_split in (("eval", "validation"), ("test", "test")):
+    for split, dataset_split in (("valid", "validation"), ("test", "test")):
         dataset = HoCRSDataset(dataset_config, dataset_split, hypergraph_table)
-        metadata_split = "valid" if split == "eval" else "test"
-        split_metrics = export_split(
-            model=model,
-            dataset=dataset,
-            metadata=load_metadata(dataset_path, metadata_split),
-            collator=collator,
-            output_path=prediction_dir / f"{metadata_split}_top50.json",
-            batch_size=max(1, training_args.per_device_eval_batch_size),
-            num_workers=0,
-            device=device,
-        )
+        metadata_split = split
+        metadata = load_metadata(dataset_path, metadata_split)
+        if evaluation_task == "joint":
+            split_metrics = _evaluate_joint_split(
+                model=model,
+                dataset=dataset,
+                metadata=metadata,
+                collator=collator,
+                output_path=prediction_dir / f"{metadata_split}_top50.json",
+                batch_size=max(1, training_args.per_device_eval_batch_size),
+                device=device,
+                tokenizer=tokenizer,
+            )
+        else:
+            split_metrics = export_split(
+                model=model,
+                dataset=dataset,
+                metadata=metadata,
+                collator=collator,
+                output_path=prediction_dir / f"{metadata_split}_top50.json",
+                batch_size=max(1, training_args.per_device_eval_batch_size),
+                num_workers=0,
+                device=device,
+            )
         metrics[split] = {
             f"{split}_{key}": value for key, value in split_metrics.items()
         }
@@ -274,8 +383,20 @@ def main() -> None:
         if training_args.do_train or training_args.do_predict
         else None
     )
-    training_args.label_names = (
-        ["rec_labels"] if model_args.task == "recommendation" else ["labels"]
+    training_args.label_names = {
+        "recommendation": ["rec_labels"],
+        "conversation": ["labels"],
+        "joint": ["labels", "rec_labels"],
+    }[model_args.task]
+    compute_metrics = (
+        None
+        if model_args.task == "joint"
+        else build_compute_metrics(processor, model_args.task)
+    )
+    preprocess_logits = (
+        None
+        if model_args.task == "joint"
+        else preprocess_logits_for_metrics(model_args.task)
     )
     # The test split is deliberately kept out of the training callbacks.  It
     # is evaluated once, after training restores the best validation-loss
@@ -292,8 +413,8 @@ def main() -> None:
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=processor,
-        compute_metrics=build_compute_metrics(processor, model_args.task),
-        preprocess_logits_for_metrics=preprocess_logits_for_metrics(model_args.task),
+        compute_metrics=compute_metrics,
+        preprocess_logits_for_metrics=preprocess_logits,
         callbacks=[EvaluateAtEpochEndCallback()] if training_args.do_train else None,
     )
     if training_args.do_train and train_dataset is not None:
@@ -332,7 +453,7 @@ def main() -> None:
         trainer.save_metrics("train", result.metrics)
     if (
         training_args.do_train
-        and model_args.task == "recommendation"
+        and model_args.task in {"recommendation", "joint"}
         and trainer.state.best_model_checkpoint
     ):
         if trainer.is_world_process_zero():
@@ -348,7 +469,14 @@ def main() -> None:
                 data_args,
                 training_args,
             )
-            trainer.save_metrics("eval", saved_metrics["eval"])
+            final_metrics = {
+                key: value
+                for split_metrics in saved_metrics.values()
+                for key, value in split_metrics.items()
+                if isinstance(value, (int, float))
+            }
+            trainer.log(final_metrics)
+            trainer.save_metrics("valid", saved_metrics["valid"])
             trainer.save_metrics("test", saved_metrics["test"])
     else:
         if eval_dataset is not None:

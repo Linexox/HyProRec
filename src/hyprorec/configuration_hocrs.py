@@ -98,12 +98,14 @@ class HoCRSConfig(PretrainedConfig):
         item_table_view: str = "txt",
         grounding_checkpoint_path: str | None = None,
         recommendation_hidden_dim: int = 2048,
+        recommendation_attention_dim: int = 256,
         recommendation_temperature: float = 0.07,
         recommendation_view_loss_weight: float = 0.2,
         use_recommendation_bpr_loss: bool = False,
         recommendation_bpr_loss_weight: float = 0.0,
         use_recommendation_balance_loss: bool = False,
         recommendation_balance_loss_weight: float = 0.0,
+        conversation_loss_weight: float = 1.0,
         recommendation_router_hidden_dim: int = 512,
         num_prompt_tokens: int = 20,
         freeze_backbone: bool = True,
@@ -116,8 +118,8 @@ class HoCRSConfig(PretrainedConfig):
             kwargs.setdefault(name, getattr(backbone_config, name, None))
         super().__init__(**kwargs)
         views = tuple(dict.fromkeys(views))
-        if task not in {"recommendation", "conversation"}:
-            raise ValueError("task must be recommendation or conversation.")
+        if task not in {"recommendation", "conversation", "joint"}:
+            raise ValueError("task must be recommendation, conversation, or joint.")
         if recommendation_head != "item_table":
             raise ValueError("Only the item_table recommendation head is supported.")
         if set(views) - set(ALL_GRAPH_VIEWS):
@@ -129,6 +131,7 @@ class HoCRSConfig(PretrainedConfig):
         if (
             num_items < 1
             or recommendation_hidden_dim < 1
+            or recommendation_attention_dim < 1
             or recommendation_router_hidden_dim < 1
             or num_prompt_tokens != 20
         ):
@@ -149,6 +152,8 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError(
                 "recommendation_balance_loss_weight must be positive when balance loss is enabled."
             )
+        if conversation_loss_weight < 0:
+            raise ValueError("conversation_loss_weight must be non-negative.")
         self.task = task
         self.recommendation_head = recommendation_head
         self.views = views
@@ -158,12 +163,14 @@ class HoCRSConfig(PretrainedConfig):
         self.item_table_view = item_table_view
         self.grounding_checkpoint_path = grounding_checkpoint_path
         self.recommendation_hidden_dim = recommendation_hidden_dim
+        self.recommendation_attention_dim = recommendation_attention_dim
         self.recommendation_temperature = recommendation_temperature
         self.recommendation_view_loss_weight = recommendation_view_loss_weight
         self.use_recommendation_bpr_loss = use_recommendation_bpr_loss
         self.recommendation_bpr_loss_weight = recommendation_bpr_loss_weight
         self.use_recommendation_balance_loss = use_recommendation_balance_loss
         self.recommendation_balance_loss_weight = recommendation_balance_loss_weight
+        self.conversation_loss_weight = conversation_loss_weight
         self.recommendation_router_hidden_dim = recommendation_router_hidden_dim
         self.num_prompt_tokens = num_prompt_tokens
         self.freeze_backbone = freeze_backbone
