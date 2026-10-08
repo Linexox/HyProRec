@@ -1,4 +1,4 @@
-"""Configuration for the decoupled HyProRec models."""
+"""Configuration for the unified HyProRec recommendation-dialogue model."""
 
 from __future__ import annotations
 
@@ -84,7 +84,6 @@ class HoCRSConfig(PretrainedConfig):
     def __init__(
         self,
         backbone_config: PretrainedConfig | dict[str, Any] | None = None,
-        task: str = "recommendation",
         recommendation_head: str = "item_table",
         views: list[str] | tuple[str, ...] = ALL_GRAPH_VIEWS,
         co_feature_view: str = "txt",
@@ -118,8 +117,6 @@ class HoCRSConfig(PretrainedConfig):
             kwargs.setdefault(name, getattr(backbone_config, name, None))
         super().__init__(**kwargs)
         views = tuple(dict.fromkeys(views))
-        if task not in {"recommendation", "conversation", "joint"}:
-            raise ValueError("task must be recommendation, conversation, or joint.")
         if recommendation_head != "item_table":
             raise ValueError("Only the item_table recommendation head is supported.")
         if set(views) - set(ALL_GRAPH_VIEWS):
@@ -154,7 +151,6 @@ class HoCRSConfig(PretrainedConfig):
             )
         if conversation_loss_weight < 0:
             raise ValueError("conversation_loss_weight must be non-negative.")
-        self.task = task
         self.recommendation_head = recommendation_head
         self.views = views
         self.co_feature_view = co_feature_view

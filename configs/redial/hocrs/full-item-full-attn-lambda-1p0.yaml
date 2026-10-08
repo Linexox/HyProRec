@@ -1,6 +1,5 @@
 model:
   backbone_name_or_path: /data2/lhf/.MODEL/Qwen2.5-Omni-3B
-  task: recommendation
   recommendation_head: item_table
   freeze_backbone: true
   num_prompt_tokens: 20
@@ -8,18 +7,22 @@ model:
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
   grounding_checkpoint_path: outputs/redial/hocrs/grounding-eight-towers
-  item_table_view: img
+  item_table_view: full
   co_feature_view: txt
   recommendation_hidden_dim: 2048
+  recommendation_attention_dim: 256
   recommendation_temperature: 0.07
   recommendation_view_loss_weight: 0.2
+  conversation_loss_weight: 1.0
+  use_recommendation_bpr_loss: false
+  recommendation_bpr_loss_weight: 0.0
   use_recommendation_balance_loss: false
   recommendation_balance_loss_weight: 0.0
 data:
   dataset_path: data/hocrs2_redial
   hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
   embeddings_dir_name: embeddings
-  views: [img]
+  views: [txt, img, vdo, ado]
   topk: 3
   khop: 2
   hyperedge_sampling: strict
@@ -28,7 +31,7 @@ data:
   max_history_tokens: 256
   max_sequence_tokens: 1024
 training:
-  output_dir: outputs/redial/hocrs/semantic-item-n64-h256/only-img
+  output_dir: outputs/redial/hocrs/semantic-item-n64-h256/full-attn-lambda-1p0
   do_train: true
   do_eval: true
   do_predict: true
@@ -49,10 +52,12 @@ training:
   save_strategy: steps
   save_steps: 200
   load_best_model_at_end: true
-  metric_for_best_model: eval_loss
-  greater_is_better: false
+  metric_for_best_model: eval_recall@50
+  greater_is_better: true
   save_total_limit: 2
+  logging_strategy: steps
+  logging_steps: 20
   report_to: wandb
-  run_name: only-img
+  run_name: full-attn-lambda-1p0
   seed: 42
   data_seed: 42

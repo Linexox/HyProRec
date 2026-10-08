@@ -45,7 +45,7 @@ class BatchData(BatchFeature):
 
 
 class HypergraphBatch(BatchData):
-    """A disjoint union of same-view hypergraphs in one minibatch."""
+    """A concatenated batch of same-view hypergraphs."""
 
     @property
     def batch_size(self) -> int:

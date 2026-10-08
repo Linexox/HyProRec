@@ -5,7 +5,6 @@ from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from .configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
 from .modeling_hocrs import (
     GraphTokenMoE,
-    HoCRSConversationModel,
     HoCRSRecommendationModel,
 )
 from .configuration_grounding import HoCRSGroundingConfig
@@ -14,7 +13,7 @@ from .processing_hocrs import HoCRSProcessor
 
 AutoConfig.register(HoCRSConfig.model_type, HoCRSConfig, exist_ok=True)
 AutoModel.register(HoCRSConfig, HoCRSRecommendationModel, exist_ok=True)
-AutoModelForCausalLM.register(HoCRSConfig, HoCRSConversationModel, exist_ok=True)
+AutoModelForCausalLM.register(HoCRSConfig, HoCRSRecommendationModel, exist_ok=True)
 AutoConfig.register(
     HoCRSGroundingConfig.model_type, HoCRSGroundingConfig, exist_ok=True
 )
@@ -24,7 +23,6 @@ AutoModel.register(HoCRSGroundingConfig, HoCRSGroundingModel, exist_ok=True)
 __all__ = [
     "HoCRSConfig",
     "HoCRSHypergraphConfig",
-    "HoCRSConversationModel",
     "HoCRSRecommendationModel",
     "GraphTokenMoE",
     "HoCRSProcessor",

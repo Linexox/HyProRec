@@ -45,7 +45,6 @@ def main() -> None:
     table = HypergraphTable.from_json(table_path)
     dataset_config = HoCRSDatasetConfig(
         dataset_path=data_args.dataset_path,
-        task=model_args.task,
         hyperedge_table_path=table_path,
         views=tuple(data_args.views),
         topk=data_args.topk,
@@ -54,7 +53,6 @@ def main() -> None:
     )
     collator = HoCRSDataCollator(
         processor,
-        model_args.task,
         data_args.max_history_tokens,
         data_args.max_sequence_tokens,
     )

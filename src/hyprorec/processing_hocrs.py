@@ -1,4 +1,4 @@
-"""Prompt serialization for the two independent HyProRec tasks."""
+"""Prompt serialization for HyProRec recommendation and dialogue."""
 
 from __future__ import annotations
 

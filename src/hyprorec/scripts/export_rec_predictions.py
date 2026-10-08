@@ -176,7 +176,6 @@ def main() -> None:
     )
     collator = HoCRSDataCollator(
         processor,
-        task="recommendation",
         max_history_tokens=data_args.max_history_tokens,
         max_sequence_tokens=data_args.max_sequence_tokens,
     )
@@ -190,7 +189,6 @@ def main() -> None:
     dataset_config = HoCRSDatasetConfig(
         dataset_path=data_args.dataset_path,
         hyperedge_table_path=data_args.hyperedge_table_path,
-        task="recommendation",
         views=tuple(data_args.views),
         topk=data_args.topk,
         khop=data_args.khop,

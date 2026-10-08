@@ -6,9 +6,6 @@ import math
 from collections import Counter
 from collections.abc import Sequence
 
-from transformers import EvalPrediction
-
-
 def _tokens(text: str) -> list[str]:
     return str(text).strip().split()
 
@@ -135,48 +132,9 @@ def conversation_teacher_forcing_metrics_from_texts(
     return metrics
 
 
-def preprocess_logits_for_metrics(task: str):
-    def process(logits, _labels):
-        scores = logits[0] if isinstance(logits, tuple) else logits
-        if task == "recommendation":
-            return scores.topk(min(50, scores.size(-1)), dim=-1).indices
-        return scores[:, :-1].argmax(dim=-1)
-
-    return process
-
-
-def build_compute_metrics(processor, task: str = "recommendation") -> callable:
-    tokenizer = processor.tokenizer
-
-    def compute_metrics(prediction: EvalPrediction) -> dict[str, float]:
-        if task == "recommendation":
-            return recommendation_metrics(
-                prediction.predictions.tolist(), prediction.label_ids.tolist()
-            )
-        token_predictions = prediction.predictions
-        shifted_labels = prediction.label_ids[:, 1:]
-        references = []
-        hypotheses = []
-        for predicted, labels in zip(token_predictions, shifted_labels):
-            mask = labels != -100
-            references.append(tokenizer.decode(labels[mask], skip_special_tokens=True))
-            hypotheses.append(
-                tokenizer.decode(predicted[mask], skip_special_tokens=True)
-            )
-        metrics = {}
-        for n in range(1, 5):
-            metrics[f"bleu@{n}"] = _bleu(references, hypotheses, n)
-            metrics[f"dist@{n}"] = _distinct(hypotheses, n)
-        return metrics
-
-    return compute_metrics
-
-
 __all__ = [
-    "build_compute_metrics",
     "conversation_teacher_forcing_metrics",
     "conversation_teacher_forcing_metrics_from_texts",
     "conversation_teacher_forcing_texts",
-    "preprocess_logits_for_metrics",
     "recommendation_metrics",
 ]

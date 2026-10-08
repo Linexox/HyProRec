@@ -1,4 +1,4 @@
-"""Hypergraph-prompted recommendation with optional teacher-forced dialogue loss."""
+"""Hypergraph-prompted recommendation and teacher-forced dialogue."""
 
 from __future__ import annotations
 
@@ -13,10 +13,7 @@ from torch import nn
 import torch.nn.functional as F
 from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
 from transformers.generation import GenerationMixin
-from transformers.modeling_outputs import (
-    CausalLMOutputWithPast,
-    SequenceClassifierOutput,
-)
+from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers.utils import ModelOutput
 
 from .configuration_hocrs import HoCRSConfig, canonical_feature_dims
@@ -121,6 +118,7 @@ class GraphTokenMoE(nn.Module):
     ) -> None:
         super().__init__()
         self.view_to_index = {view: i for i, view in enumerate(views)}
+        self.num_experts = num_experts
         self.view_embeddings = nn.Parameter(torch.randn(len(views), hidden_size) * 0.02)
         self.router = nn.Linear(hidden_size * 2, num_experts)
         self.experts = nn.ModuleList(
@@ -138,16 +136,19 @@ class GraphTokenMoE(nn.Module):
             nn.init.zeros_(expert[-1].weight)
             nn.init.zeros_(expert[-1].bias)
 
-    def forward(self, features: torch.Tensor, view: str) -> torch.Tensor:
+    def forward(
+        self, features: torch.Tensor, view: str, return_diagnostics: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         view_embedding = self.view_embeddings[self.view_to_index[view]].expand(features.size(0), -1)
         router_input = torch.cat((features, view_embedding.to(features.dtype)), dim=-1).float()
         weights = F.softmax(self.router(router_input), dim=-1)
         outputs = torch.stack([expert(features) for expert in self.experts], dim=1)
         delta = (weights.to(outputs.dtype).unsqueeze(-1) * outputs).sum(dim=1)
-        return (
+        transformed = (
             features
             + self.residual_scales[self.view_to_index[view]].to(features.dtype) * delta
         )
+        return (transformed, weights) if return_diagnostics else transformed
 
 
 class ViewAttentionPooling(nn.Module):
@@ -251,7 +252,8 @@ class ItemTableHead(nn.Module):
             users[name] = F.normalize(self.user_projects[name](pooled[name].float()), dim=-1)
         items = self.item_embeddings(features)
         view_logits = tuple(
-            users[name] @ items[name].t() / self.temperature for name in self.names
+            users[name] @ items[name].t() / self.temperature
+            for name in self.names
         )
         route_input = torch.cat([users[name] for name in self.names], dim=-1)
         route_weights = F.softmax(self.router(route_input.float()), dim=-1)
@@ -338,6 +340,7 @@ class HoCRSRecommendationOutput(SequenceClassifierOutput):
     route_weights: torch.Tensor | None = None
     view_logits: tuple[torch.Tensor, ...] | None = None
     attention_weights: dict[str, torch.Tensor] | None = None
+    graph_moe_diagnostics: dict[str, dict[str, torch.Tensor]] | None = None
 
 
 class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
@@ -368,9 +371,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         super().__init__(config)
         self.backbone = backbone or _backbone_from_config(config.backbone_config)
         hidden_size = _hidden_size(config.backbone_config)
-        self.soft_prompt_embeddings = nn.Embedding(
-            config.num_prompt_tokens, hidden_size
-        )
+        self.soft_prompt_embeddings = nn.Embedding(config.num_prompt_tokens, hidden_size)
         self.hypergraph_encoders = nn.ModuleDict()
         self.hypergraph_projectors = nn.ModuleDict()
         needed = {view for view in config.views if view != "co"}
@@ -380,21 +381,19 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         # checkpoint/API compatibility.  Recommendation reads the separate
         # ``item_*_feature_table`` buffers below, so the two paths remain
         # independent despite identical initialization values.
-        if config.task in {"recommendation", "joint"}:
-            needed.update(config.item_feature_dims)
+        needed.update(config.item_feature_dims)
         for view in needed:
             self.register_buffer(
                 f"{view}_feature_table",
                 torch.zeros(config.num_items, config.item_feature_dims[view]),
                 persistent=True,
             )
-        if config.task in {"recommendation", "joint"}:
-            for view in config.item_feature_dims:
-                self.register_buffer(
-                    f"item_{view}_feature_table",
-                    torch.zeros(config.num_items, config.item_feature_dims[view]),
-                    persistent=True,
-                )
+        for view in config.item_feature_dims:
+            self.register_buffer(
+                f"item_{view}_feature_table",
+                torch.zeros(config.num_items, config.item_feature_dims[view]),
+                persistent=True,
+            )
         for view in config.views:
             graph_config = config.get_hypergraph_config(view)
             self.hypergraph_encoders[view] = HypergraphEncoder(graph_config)
@@ -473,10 +472,18 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
     def train(self, mode: bool = True):
         super().train(mode)
         if self.config.freeze_backbone:
-            self.backbone.eval()
+            if mode and self.backbone.is_gradient_checkpointing:
+                # Checkpointed decoder layers need training mode even when
+                # their parameters are frozen. Keep frozen-backbone dropout off.
+                for module in self.backbone.modules():
+                    if isinstance(module, nn.Dropout):
+                        module.eval()
+            else:
+                self.backbone.eval()
         return self
 
     def _inject(self, input_ids, hypergraphs):
+        self._last_graph_moe_diagnostics = {}
         embeds = self.get_input_embeddings()(input_ids).clone()
         prompt_positions = input_ids == self.config.prompt_token_id
         prompt_ids = torch.arange(
@@ -492,12 +499,28 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             node_features = getattr(self, f"{feature_view}_feature_table").index_select(0, graph["node_ids"])
             encoded = self.hypergraph_encoders[view](node_features, graph["hyperedge_index"], int(graph["edge_ptr"][-1]))
             projected_graph = self.hypergraph_projectors[view](encoded)
-            projected = self.graph_moe(
+            projected, router_weights = self.graph_moe(
                 view=view,
                 features=torch.cat(
                     (projected_graph.node_features, projected_graph.hyperedge_features)
                 ),
+                return_diagnostics=True,
             )
+            router_weights = router_weights.float()
+            expert_mean = router_weights.mean(dim=0)
+            top1 = router_weights.argmax(dim=-1)
+            top1_fraction = F.one_hot(
+                top1, num_classes=self.graph_moe.num_experts
+            ).float().mean(dim=0)
+            entropy = -(
+                router_weights.clamp_min(1e-8) * router_weights.clamp_min(1e-8).log()
+            ).sum(dim=-1).mean()
+            self._last_graph_moe_diagnostics[view] = {
+                "expert_mean": expert_mean,
+                "entropy": entropy,
+                "top1_fraction": top1_fraction,
+                "dead_expert_fraction": (top1_fraction == 0).float().mean(),
+            }
             node_count = graph["node_positions"].size(0)
             embeds[graph["node_positions"][:, 0], graph["node_positions"][:, 1]] = projected[:node_count].to(embeds.dtype)
             embeds[graph["hyperedge_positions"][:, 0], graph["hyperedge_positions"][:, 1]] = projected[node_count:].to(embeds.dtype)
@@ -506,8 +529,11 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
     def encode(self, input_ids, attention_mask=None, hypergraphs=None, **kwargs):
         kwargs.pop("return_dict", None)
         kwargs.pop("output_hidden_states", None)
+        kwargs.pop("use_cache", None)
         cache = kwargs.get("past_key_values")
         cached_step = cache is not None and cache.get_seq_length() > 0
+        if cached_step:
+            self._last_graph_moe_diagnostics = {}
         embeds = (
             self.get_input_embeddings()(input_ids)
             if cached_step
@@ -520,6 +546,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             attention_mask=attention_mask,
             output_hidden_states=True,
             return_dict=True,
+            use_cache=False,
             **kwargs,
         )
 
@@ -560,6 +587,8 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
             **kwargs,
         )
         hidden = output.hidden_states[-1]
+        # Only the final layer is used by the recommendation head.
+        output.hidden_states = (hidden,)
         if pooling_mask is None:
             pooling_mask = attention_mask.bool()
         recommendation = self.recommendation_head(
@@ -573,37 +602,23 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
             loss=loss,
             logits=recommendation.logits,
             recommendation_logits=recommendation.logits,
-            hidden_states=output.hidden_states,
-            attentions=output.attentions,
             fusion_loss=recommendation.fusion_loss,
             view_loss=recommendation.view_loss,
             bpr_loss=recommendation.bpr_loss,
             balance_loss=recommendation.balance_loss,
             conversation_loss=output.loss,
-            conversation_logits=output.logits,
+            # Evaluation needs teacher-forced predictions; training only needs
+            # the LM loss. Avoid FP32 conversion/DDP cloning of vocabulary logits.
+            conversation_logits=output.logits if not self.training else None,
             route_weights=recommendation.route_weights,
             view_logits=recommendation.view_logits,
             attention_weights=recommendation.attention_weights,
-        )
-
-
-class HoCRSConversationModel(HoCRSBaseModel):
-    def forward(
-        self, input_ids, attention_mask=None, labels=None, hypergraphs=None, **kwargs
-    ):
-        output = self.encode(input_ids, attention_mask, hypergraphs, labels=labels, **kwargs)
-        return CausalLMOutputWithPast(
-            loss=output.loss,
-            logits=output.logits,
-            past_key_values=output.past_key_values,
-            hidden_states=output.hidden_states,
-            attentions=output.attentions,
+            graph_moe_diagnostics=getattr(self, "_last_graph_moe_diagnostics", {}),
         )
 
 
 __all__ = [
     "HoCRSConfig",
-    "HoCRSConversationModel",
     "HoCRSRecommendationModel",
     "HypergraphEncoder",
     "HypergraphEncoderOutput",

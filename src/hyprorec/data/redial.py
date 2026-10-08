@@ -1,4 +1,4 @@
-"""Turn-level ReDial samples for recommendation, conversation, and joint tasks."""
+"""Recommendation-and-dialogue ReDial samples."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from .hypergraph import HypergraphData, HypergraphTable
 @dataclass
 class HoCRSDatasetConfig:
     dataset_path: str
-    task: str = "recommendation"
     hyperedge_table_path: str | None = None
     views: tuple[str, ...] = ALL_GRAPH_VIEWS
     topk: int = 3
@@ -29,8 +28,6 @@ class HoCRSDatasetConfig:
     max_hypergraph_nodes: int | None = 64
 
     def __post_init__(self) -> None:
-        if self.task not in {"recommendation", "conversation", "joint"}:
-            raise ValueError("task must be recommendation, conversation, or joint.")
         if set(self.views) - set(ALL_GRAPH_VIEWS):
             raise ValueError("Unknown graph view.")
         if not 0 <= self.topk <= 10 or self.khop < 1:
@@ -65,12 +62,12 @@ class HoCRSDataset(Dataset):
         with (Path(config.dataset_path) / self.SPLIT_FILES[split]).open(
             encoding="utf-8"
         ) as file:
-            self.samples = self._build_samples(json.load(file), config.task)
+            self.samples = self._build_samples(json.load(file))
         self.repeat = config.sample_repeat if split == "train" else 1
 
     @staticmethod
     def _build_samples(
-        conversations: Sequence[dict[str, Any]], task: str
+        conversations: Sequence[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         samples = []
         for conversation in conversations:
@@ -83,11 +80,8 @@ class HoCRSDataset(Dataset):
                     "response": turn["text"],
                     "role": turn["role"],
                 }
-                if task == "conversation":
-                    samples.append(entry)
-                else:
-                    for item in items:
-                        samples.append({**entry, "target_item_id": item})
+                for item in items:
+                    samples.append({**entry, "target_item_id": item})
                 context.append(f"[{turn['role']}]: {turn['text']}")
                 context_items.extend(items)
         return samples
@@ -118,12 +112,10 @@ class HoCRSDataCollator:
     def __init__(
         self,
         processor: HoCRSProcessor,
-        task: str,
         max_history_tokens: int = 256,
         max_sequence_tokens: int = 1024,
     ) -> None:
         self.processor = processor
-        self.task = task
         self.max_history_tokens = max_history_tokens
         self.max_sequence_tokens = max_sequence_tokens
         if not 0 < max_history_tokens <= 256:
@@ -160,17 +152,12 @@ class HoCRSDataCollator:
                 for view, graph in sample["hypergraphs"].items()
             }
             prompt = self.processor.build_prompt(context, sizes)
-            if self.task in {"conversation", "joint"}:
-                prompt += f"\n{sample['role']}:"
+            prompt += f"\n{sample['role']}:"
             prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-            response_ids = (
-                tokenizer(
-                    sample["response"] + (tokenizer.eos_token or ""),
-                    add_special_tokens=False,
-                )["input_ids"]
-                if self.task in {"conversation", "joint"}
-                else []
-            )
+            response_ids = tokenizer(
+                sample["response"] + (tokenizer.eos_token or ""),
+                add_special_tokens=False,
+            )["input_ids"]
             prompts.append({"input_ids": prompt_ids + response_ids})
             prompt_lengths.append(len(prompt_ids))
         encoded = tokenizer.pad(prompts, padding=True, return_tensors="pt")
@@ -213,21 +200,18 @@ class HoCRSDataCollator:
                 "hypergraphs": hypergraphs,
             }
         )
-        if self.task in {"recommendation", "joint"}:
-            pooling_mask = encoded["attention_mask"].bool()
-            if self.task == "joint":
-                for row, length in enumerate(prompt_lengths):
-                    pooling_mask[row, length:] = False
-            batch["pooling_mask"] = pooling_mask
-            batch["rec_labels"] = torch.tensor(
-                [sample["target_item_id"] for sample in features], dtype=torch.long
-            )
-        if self.task in {"conversation", "joint"}:
-            labels = input_ids.clone()
-            labels[encoded["attention_mask"] == 0] = -100
-            for row, length in enumerate(prompt_lengths):
-                labels[row, :length] = -100
-            batch["labels"] = labels
+        pooling_mask = encoded["attention_mask"].bool()
+        for row, length in enumerate(prompt_lengths):
+            pooling_mask[row, length:] = False
+        batch["pooling_mask"] = pooling_mask
+        batch["rec_labels"] = torch.tensor(
+            [sample["target_item_id"] for sample in features], dtype=torch.long
+        )
+        labels = input_ids.clone()
+        labels[encoded["attention_mask"] == 0] = -100
+        for row, length in enumerate(prompt_lengths):
+            labels[row, :length] = -100
+        batch["labels"] = labels
         return batch
 
 

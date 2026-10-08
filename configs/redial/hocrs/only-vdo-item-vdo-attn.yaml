@@ -1,6 +1,5 @@
 model:
   backbone_name_or_path: /data2/lhf/.MODEL/Qwen2.5-Omni-3B
-  task: joint
   recommendation_head: item_table
   freeze_backbone: true
   num_prompt_tokens: 20
@@ -32,7 +31,7 @@ data:
   max_history_tokens: 256
   max_sequence_tokens: 1024
 training:
-  output_dir: outputs/redial/hocrs/semantic-item-n64-h256/only-vdo-joint-attn
+  output_dir: outputs/redial/hocrs/semantic-item-n64-h256/only-vdo-attn
   do_train: true
   do_eval: true
   do_predict: true
@@ -56,7 +55,9 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   save_total_limit: 2
+  logging_strategy: steps
+  logging_steps: 20
   report_to: wandb
-  run_name: only-vdo-joint-attn
+  run_name: only-vdo-attn
   seed: 42
   data_seed: 42

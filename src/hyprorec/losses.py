@@ -21,10 +21,12 @@ def multi_positive_contrastive_loss(
     positives = item_ids[:, None].eq(item_ids[None, :])
     positive_logits = logits.masked_fill(~positives, -torch.inf)
     left_loss = -(
-        torch.logsumexp(positive_logits, dim=1) - torch.logsumexp(logits, dim=1)
+        torch.logsumexp(positive_logits, dim=1) - \
+        torch.logsumexp(logits, dim=1)
     ).mean()
     right_loss = -(
-        torch.logsumexp(positive_logits.t(), dim=1) - torch.logsumexp(logits.t(), dim=1)
+        torch.logsumexp(positive_logits.t(), dim=1) - \
+        torch.logsumexp(logits.t(), dim=1)
     ).mean()
     return (left_loss + right_loss) / 2
 

@@ -1,4 +1,4 @@
-"""Typed experiment arguments for the independent HyProRec tasks."""
+"""Typed experiment arguments for unified HyProRec training."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from .constants import MODALITIES
 @dataclass
 class ModelArguments:
     backbone_name_or_path: str = "microsoft/DialoGPT-small"
-    task: str = "recommendation"
     recommendation_head: str = "item_table"
     freeze_backbone: bool = True
     num_prompt_tokens: int = 20
@@ -42,8 +41,6 @@ class ModelArguments:
     recommendation_router_hidden_dim: int = 512
 
     def __post_init__(self) -> None:
-        if self.task not in {"recommendation", "conversation", "joint"}:
-            raise ValueError("task must be recommendation, conversation, or joint.")
         if self.recommendation_head != "item_table":
             raise ValueError("Only the item_table recommendation head is supported.")
         if self.item_table_view not in (*MODALITIES, "full"):
