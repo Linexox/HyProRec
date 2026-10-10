@@ -20,7 +20,10 @@ from .configuration_hocrs import HoCRSConfig, canonical_feature_dims
 
 
 def load_backbone(name_or_path: str) -> nn.Module:
-    config = AutoConfig.from_pretrained(name_or_path)
+    try:
+        config = AutoConfig.from_pretrained(name_or_path)
+    except ValueError:
+        config = AutoConfig.from_pretrained(name_or_path, trust_remote_code=True)
     if config.model_type == "qwen2_5_omni" and "Qwen2_5OmniModel" in (
         getattr(config, "architectures", None) or ()
     ):
@@ -44,11 +47,12 @@ def load_backbone(name_or_path: str) -> nn.Module:
                 low_cpu_mem_usage=True,
             )
         )
+    custom_code = bool(getattr(config, "auto_map", None))
     is_multimodal = config.model_type in {"llava", "qwen2_5_vl"} or (
         "omni" in config.model_type
     )
     dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-    if is_multimodal:
+    if is_multimodal and not custom_code:
         from transformers import AutoModelForImageTextToText
 
         model = AutoModelForImageTextToText.from_pretrained(
@@ -57,11 +61,13 @@ def load_backbone(name_or_path: str) -> nn.Module:
             low_cpu_mem_usage=True,
         )
     else:
-        model = AutoModelForCausalLM.from_pretrained(
-            name_or_path,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-        )
+        kwargs = {
+            "torch_dtype": dtype,
+            "low_cpu_mem_usage": True,
+        }
+        if custom_code:
+            kwargs["trust_remote_code"] = True
+        model = AutoModelForCausalLM.from_pretrained(name_or_path, **kwargs)
     return _ensure_lm_head_accessors(model)
 
 
@@ -101,15 +107,17 @@ def _backbone_from_config(config) -> nn.Module:
 
         thinker = Qwen2_5OmniThinkerForConditionalGeneration(config)
         return _ensure_lm_head_accessors(thinker)
+    custom_code = bool(getattr(config, "auto_map", None))
     is_multimodal = config.model_type in {"llava", "qwen2_5_vl"} or (
         "omni" in config.model_type
     )
-    if is_multimodal:
+    if is_multimodal and not custom_code:
         from transformers import AutoModelForImageTextToText
 
         model = AutoModelForImageTextToText.from_config(config)
     else:
-        model = AutoModelForCausalLM.from_config(config)
+        kwargs = {"trust_remote_code": True} if custom_code else {}
+        model = AutoModelForCausalLM.from_config(config, **kwargs)
     return _ensure_lm_head_accessors(model)
 
 
