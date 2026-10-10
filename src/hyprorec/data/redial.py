@@ -59,6 +59,7 @@ class HoCRSDataset(Dataset):
         self.hypergraph_table = hypergraph_table or HypergraphTable.from_json(
             table_path
         )
+        self._strict_graph_cache: dict[tuple[int, str], HypergraphData] = {}
         with (Path(config.dataset_path) / self.SPLIT_FILES[split]).open(
             encoding="utf-8"
         ) as file:
@@ -90,21 +91,27 @@ class HoCRSDataset(Dataset):
         return len(self.samples) * self.repeat
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        sample = self.samples[index // self.repeat]
+        sample_index = index // self.repeat
+        sample = self.samples[sample_index]
         sampling = self.config.sampling if self.split == "train" else "strict"
         graphs = {}
         if sample["context_item_ids"]:
-            graphs = {
-                view: self.hypergraph_table.build_local(
-                    sample["context_item_ids"],
-                    view,
-                    self.config.topk,
-                    self.config.khop,
-                    sampling,
-                    max_nodes=self.config.max_hypergraph_nodes,
-                )
-                for view in self.config.views
-            }
+            for view in self.config.views:
+                cache_key = (sample_index, view)
+                if sampling == "strict" and cache_key in self._strict_graph_cache:
+                    graph = self._strict_graph_cache[cache_key]
+                else:
+                    graph = self.hypergraph_table.build_local(
+                        sample["context_item_ids"],
+                        view,
+                        self.config.topk,
+                        self.config.khop,
+                        sampling,
+                        max_nodes=self.config.max_hypergraph_nodes,
+                    )
+                    if sampling == "strict":
+                        self._strict_graph_cache[cache_key] = graph
+                graphs[view] = graph
         return {**sample, "hypergraphs": graphs}
 
 
@@ -118,6 +125,10 @@ class HoCRSDataCollator:
         self.processor = processor
         self.max_history_tokens = max_history_tokens
         self.max_sequence_tokens = max_sequence_tokens
+        tokenizer = processor.tokenizer
+        self._newline_ids = tokenizer("\n", add_special_tokens=False)["input_ids"]
+        self._role_ids: dict[str, list[int]] = {}
+        self._token_ids = processor.get_token_id_map()
         if not 0 < max_history_tokens <= 256:
             raise ValueError("max_history_tokens must be in (0, 256].")
         if max_sequence_tokens < 1:
@@ -146,14 +157,29 @@ class HoCRSDataCollator:
             history = tokenizer(sample["context"], add_special_tokens=False)[
                 "input_ids"
             ][-self.max_history_tokens :]
-            context = tokenizer.decode(history, skip_special_tokens=False)
             sizes = {
                 view: (graph.num_nodes, graph.num_hyperedges)
                 for view, graph in sample["hypergraphs"].items()
             }
-            prompt = self.processor.build_prompt(context, sizes)
-            prompt += f"\n{sample['role']}:"
-            prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+            prompt_ids = [
+                self._token_ids["soft_prompt_token_id"]
+            ] * self.processor.num_prompt_tokens
+            prompt_ids.extend(self._newline_ids)
+            prompt_ids.extend(history)
+            if sizes:
+                prompt_ids.extend(self._newline_ids)
+                for index, (view, size) in enumerate(sizes.items()):
+                    if index:
+                        prompt_ids.extend(self._newline_ids)
+                    prompt_ids.extend(
+                        self.processor.serialize_graph_ids(view, *size)
+                    )
+            role = sample["role"]
+            if role not in self._role_ids:
+                self._role_ids[role] = tokenizer(
+                    f"\n{role}:", add_special_tokens=False
+                )["input_ids"]
+            prompt_ids.extend(self._role_ids[role])
             response_ids = tokenizer(
                 sample["response"] + (tokenizer.eos_token or ""),
                 add_special_tokens=False,

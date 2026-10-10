@@ -30,10 +30,30 @@ class GroundingTrainer(Trainer):
     def __init__(self, *args, swanlab_tracker=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.swanlab_tracker = swanlab_tracker
+        self._grounding_sum = {}
+        self._grounding_count = 0
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        outputs = model(**inputs)
+        for name in ("loss", "ga_sa_loss", "ga_sn_loss", "sa_sn_loss"):
+            value = getattr(outputs, name, None)
+            if value is not None:
+                self._grounding_sum[name] = self._grounding_sum.get(name, 0.0) + float(
+                    value.detach().float().cpu()
+                )
+        self._grounding_count += 1
+        loss = outputs.loss
+        return (loss, outputs) if return_outputs else loss
 
     def log(self, logs, *args, **kwargs):
+        logs = dict(logs)
+        if self._grounding_count:
+            for name, value in self._grounding_sum.items():
+                logs[name] = value / self._grounding_count
+            self._grounding_sum.clear()
+            self._grounding_count = 0
         if self.swanlab_tracker is not None and self.is_world_process_zero():
-            self.swanlab_tracker.log(logs)
+            self.swanlab_tracker.log_grounding(logs)
         return super().log(logs, *args, **kwargs)
 
     def create_optimizer(self):

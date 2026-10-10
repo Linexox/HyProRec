@@ -84,6 +84,24 @@ class HoCRSProcessor(ProcessorMixin):
             )
         )
 
+    def serialize_graph_ids(
+        self,
+        view: str,
+        num_nodes: int,
+        num_hyperedges: int,
+    ) -> list[int]:
+        convert = self.tokenizer.convert_tokens_to_ids
+        return [
+            convert(graph_start_token(view)),
+            convert(NODE_START_TOKEN),
+            *([convert(NODE_TOKEN)] * num_nodes),
+            convert(NODE_END_TOKEN),
+            convert(HYPEREDGE_START_TOKEN),
+            *([convert(HYPEREDGE_TOKEN)] * num_hyperedges),
+            convert(HYPEREDGE_END_TOKEN),
+            convert(graph_end_token(view)),
+        ]
+
     def build_prompt(
         self, context: str, graph_sizes: Mapping[str, tuple[int, int]]
     ) -> str:

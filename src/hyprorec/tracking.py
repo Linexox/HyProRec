@@ -121,6 +121,21 @@ class SwanLabTracker:
                 main[f"{stage}/{clean}"] = value
         self.log({**main, **other})
 
+    def log_grounding(self, logs: dict[str, Any]) -> None:
+        stage = "valid" if any(key.startswith("eval_") for key in logs) else "train"
+        values = {}
+        names = {
+            "loss": "total",
+            "ga_sa_loss": "ga-sa",
+            "ga_sn_loss": "ga-sn",
+            "sa_sn_loss": "sa-sn",
+        }
+        for key, value in logs.items():
+            clean = key.removeprefix("eval_")
+            if clean in names:
+                values[f"{stage}/grounding/{names[clean]}"] = value
+        self.log(values)
+
     def finish(self, state: str = "success", error: str | None = None) -> None:
         if self.run is None:
             return

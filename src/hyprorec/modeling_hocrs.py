@@ -176,20 +176,21 @@ class GraphTokenMoE(nn.Module):
         self.num_experts = num_experts
         self.view_embeddings = nn.Parameter(torch.randn(len(views), hidden_size) * 0.02)
         self.router = nn.Linear(hidden_size * 2, num_experts)
-        self.experts = nn.ModuleList(
-            nn.Sequential(
-                nn.Linear(hidden_size, expert_hidden_size),
-                nn.GELU(),
-                nn.Linear(expert_hidden_size, hidden_size),
-            )
-            for _ in range(num_experts)
+        self.expert_in_weight = nn.Parameter(
+            torch.empty(num_experts, expert_hidden_size, hidden_size)
         )
+        self.expert_in_bias = nn.Parameter(torch.zeros(num_experts, expert_hidden_size))
+        self.expert_out_weight = nn.Parameter(
+            torch.empty(num_experts, hidden_size, expert_hidden_size)
+        )
+        self.expert_out_bias = nn.Parameter(torch.zeros(num_experts, hidden_size))
+        nn.init.xavier_uniform_(self.expert_in_weight)
+        nn.init.xavier_uniform_(self.expert_out_weight)
         self.residual_scales = nn.Parameter(torch.ones(len(views)))
 
     def reset_output_layers(self) -> None:
-        for expert in self.experts:
-            nn.init.zeros_(expert[-1].weight)
-            nn.init.zeros_(expert[-1].bias)
+        nn.init.zeros_(self.expert_out_weight)
+        nn.init.zeros_(self.expert_out_bias)
 
     def forward(
         self,
@@ -203,7 +204,17 @@ class GraphTokenMoE(nn.Module):
         view_embedding = view_embedding.expand(features.size(0), -1)
         router_input = torch.cat((features, view_embedding.to(features.dtype)), dim=-1)
         router_input = router_input.float()
-        outputs = torch.stack([expert(features) for expert in self.experts], dim=1)
+        expert_hidden = torch.bmm(
+            features.unsqueeze(0).expand(self.num_experts, -1, -1),
+            self.expert_in_weight.transpose(1, 2),
+        ).permute(1, 0, 2)
+        expert_hidden = expert_hidden + self.expert_in_bias.unsqueeze(0)
+        expert_hidden = F.gelu(expert_hidden)
+        outputs = torch.bmm(
+            expert_hidden.permute(1, 0, 2),
+            self.expert_out_weight.transpose(1, 2),
+        ).permute(1, 0, 2)
+        outputs = outputs + self.expert_out_bias.unsqueeze(0)
         weights = F.softmax(self.router(router_input), dim=-1)
         delta = (weights.to(outputs.dtype).unsqueeze(-1) * outputs).sum(dim=1)
         scale = self.residual_scales[view_index].to(features.dtype)
