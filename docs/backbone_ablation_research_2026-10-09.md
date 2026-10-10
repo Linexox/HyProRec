@@ -260,7 +260,7 @@ Phi 参数近似来自 [官方技术报告](https://arxiv.org/html/2503.01743v2)
 
 ## 6. 接入改动边界
 
-本次没有修改训练实现。后续实现需要处理以下明确接口：
+当前 refactor 已实现统一的 tokenizer/embedding/decoder hidden/LM logits 路径，并对 Qwen2.5-Omni Thinker 完成了实际加载与生成 smoke。后续接入其他模型仍需处理以下明确接口：
 
 1. `load_backbone()` 与 `_backbone_from_config()` 同步支持模型类型，确保训练、保存、重载一致。
 2. 统一取得 text config、input embedding、decoder hidden states 和原 LM head，保留训练过的权重。
