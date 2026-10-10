@@ -174,6 +174,7 @@ class HoCRSDataCollator:
                     prompt_ids.extend(
                         self.processor.serialize_graph_ids(view, *size)
                     )
+            prompt_ids.extend(self._newline_ids)
             role = sample["role"]
             if role not in self._role_ids:
                 self._role_ids[role] = tokenizer(
