@@ -36,6 +36,10 @@ class SwanLabTracker:
             return cls()
         import swanlab
 
+        api_key = os.getenv("SWANLAB_API_KEY")
+        if api_key:
+            swanlab.login(api_key=api_key, save=False)
+
         dataset = Path(data_args.dataset_path).name
         backbone = Path(model_args.backbone_name_or_path).name
         views = "-".join(data_args.views)
