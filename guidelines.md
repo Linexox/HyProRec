@@ -197,7 +197,7 @@ $$
 
 先只做5个，建议Qwen2.5Omni3B,InteractiveOmni-4B,Llava1.5-7b-hf，Qwen2.5VlL-3B-Instrucut,Qwen2.5-3B-Instruct。对于每个backbone,多做两个“full”，一个full相对与我们HyProRec的full（txt,vdo,ado,img），另一个是相对于模型自己的full,比如Llava1.5-7b-hf应该只有文本图像能力，所以可以做他的img+txt双模态
 
-考虑到显卡限制（8 x 3090 24GB），所以稍大的模型需要使用HSDP,脚本需要支持DDP/HSDP。通过设置accum steps, per device batch size,统一更新步的batch size为256.
+考虑到显卡限制（8 x 3090 24GB），所以稍大的模型需要使用 HSDP，脚本需要支持 DDP/HSDP。标准八卡 CRS 配置使用 `per_device_train_batch_size=1`、`gradient_accumulation_steps=32`，统一 optimizer update 的有效 batch size 为 $1\times32\times8=256$；单卡 smoke 配置可以缩小累积步数，但正式对比必须恢复为 256。
 
 #### 2. 主模型数据集：ReDial以及TG-ReDial
 

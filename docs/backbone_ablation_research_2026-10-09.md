@@ -102,7 +102,7 @@ Qwen2.5-VL 的整模约 3.8B，也见 [MiniCPM 官方模型卡的参数比较表
 
 `prepare_embeddings.py` 默认用四组独立的预训练编码器产生离线物品特征：MPNet 文本、ViT 图像、Wav2Vec2 音频、VideoMAE 视频。它们与 CRS backbone 的原生感知塔不是同一条路径。
 
-Grounding 阶段训练四个语义图塔和四个按不同模态初始化的共现图塔。图锚点、源模态锚点、源邻居聚合之间使用多正样本对比损失；源编码器通过配置构造并参与 Grounding 训练。CRS 阶段加载 Grounding checkpoint 后，`load_grounding_checkpoint()` 会冻结所加载的超图 encoder。
+Grounding 阶段只训练 `txt`、`img`、`ado`、`vdo` 四个独立语义图塔。图锚点、源模态锚点、源邻居聚合之间使用多正样本对比损失；源编码器通过配置构造并参与 Grounding 训练。CRS 阶段加载 Grounding checkpoint 后，`load_grounding_checkpoint()` 会冻结所加载的超图 encoder。
 
 CRS 输入组织为：
 
@@ -148,7 +148,7 @@ CRS 可训练组件主要包括 soft prompt、图 projector、GraphTokenMoE、at
 
 ### 当前 3B / 7B 配置
 
-两者共同使用：冻结 backbone、micro batch=1、梯度累积 16、BF16、gradient checkpointing、`use_reentrant: false`、`ddp_find_unused_parameters: true`、历史上限 256、序列上限 1024、每个局部图最大节点数 64。`encode()` 固定 `use_cache=False`。
+两者共同使用：冻结 backbone、micro batch=1、八卡正式训练时梯度累积 32（有效 update batch=256）、BF16、gradient checkpointing、`use_reentrant: false`、`ddp_find_unused_parameters: true`、历史上限 256、序列上限 1024、每个局部图最大节点数 64。`encode()` 固定 `use_cache=False`。
 
 7B 配置没有额外指定 FSDP/HSDP、量化、CPU offload 或 FlashAttention。已有 checkpointing 逻辑会在训练时让冻结 decoder 保持 checkpoint 所需的 training 状态，并关闭其中的 Dropout。
 

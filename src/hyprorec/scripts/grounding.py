@@ -133,6 +133,8 @@ def main() -> None:
         args.run_name = view.replace("_", "-")
         args.label_names = []
         args.prediction_loss_only = True
+        args.eval_strategy = "epoch"
+        args.save_strategy = "epoch"
         args.metric_for_best_model = "eval_loss"
         args.greater_is_better = False
         dataset = HoCRSGroundingDataset(
