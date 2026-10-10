@@ -86,13 +86,29 @@ def _ensure_lm_head_accessors(model: nn.Module) -> nn.Module:
     leaves the LM head at the old vocabulary size and makes the loss reshape
     invalid.
     """
-    if model.get_output_embeddings() is None and hasattr(model, "lm_head"):
-        model.get_output_embeddings = types.MethodType(
-            lambda self: self.lm_head, model
-        )
-        model.set_output_embeddings = types.MethodType(
-            lambda self, value: setattr(self, "lm_head", value), model
-        )
+    if model.get_output_embeddings() is None:
+        if hasattr(model, "lm_head"):
+            model.get_output_embeddings = types.MethodType(
+                lambda self: self.lm_head, model
+            )
+            model.set_output_embeddings = types.MethodType(
+                lambda self, value: setattr(self, "lm_head", value), model
+            )
+        else:
+            for name in ("language_model", "llm"):
+                decoder = getattr(model, name, None)
+                if decoder is None or decoder.get_output_embeddings() is None:
+                    continue
+                model.get_output_embeddings = types.MethodType(
+                    lambda self, decoder=decoder: decoder.get_output_embeddings(),
+                    model,
+                )
+                model.set_output_embeddings = types.MethodType(
+                    lambda self, value, decoder=decoder:
+                    decoder.set_output_embeddings(value),
+                    model,
+                )
+                break
     return model
 
 
