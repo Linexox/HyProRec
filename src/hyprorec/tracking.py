@@ -37,8 +37,9 @@ class SwanLabTracker:
         import swanlab
 
         api_key = os.getenv("SWANLAB_API_KEY")
-        if api_key:
-            swanlab.login(api_key=api_key, save=False)
+        api_host = os.getenv("SWANLAB_API_HOST")
+        if api_key or api_host:
+            swanlab.login(api_key=api_key, host=api_host, save=False)
 
         dataset = Path(data_args.dataset_path).name
         backbone = Path(model_args.backbone_name_or_path).name

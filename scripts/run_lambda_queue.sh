@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-source ~/lhf/init.sh >/dev/null 2>&1
 set -euo pipefail
-cd /data2/lhf/HyProRec/core
+source ~/lhf/init.sh >/dev/null 2>&1
 
-export PATH=/data2/lhf/HoCRS-v3/.venv/bin:$PATH
-export PYTHONPATH=$PWD/src
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export WANDB_PROJECT=HyProRec-Astra
-export WANDB_ENTITY=linexox7-sun-yat-sen-university
-export WANDB_MODE=online
-unset WANDB_RUN_ID WANDB_RESUME
+PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$PROJECT_ROOT"
+PYTHON_BIN="${HYPROREC_PYTHON:-/data2/lhf/envs/hyprorec-refactor/bin/python}"
+export PYTHONPATH="$PROJECT_ROOT/src"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
+export SWANLAB_PROJECT="${SWANLAB_PROJECT:-HyProRec}"
+export TMPDIR="${TMPDIR:-/data2/lhf/tmp/hyprorec-lambda}"
 
 configs=(
   full-item-full-attn-lambda-0p1
@@ -26,11 +25,11 @@ for config in "${configs[@]}"; do
 done
 
 mkdir -p logs/lambda
+mkdir -p "$TMPDIR"
 for config in "${configs[@]}"; do
   lambda="${config##*-lambda-}"
-  export WANDB_TAGS="crs,semantic-item,attention,lambda-sweep,lambda-${lambda},full,seed42"
   echo "START $(date -Is) $config"
-  torchrun --standalone --nproc-per-node=8 \
+  "$PYTHON_BIN" -m torch.distributed.run --standalone --nproc-per-node="${NPROC_PER_NODE:-8}" \
     -m hyprorec.scripts.train \
     --config "configs/redial/hocrs/$config.yaml" \
     2>&1 | tee "logs/lambda/$config.log"

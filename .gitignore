@@ -13,6 +13,7 @@ wheels/
 # Local credentials and experiment artifacts
 .env
 .env.*
+!.env.example
 /data/
 /outputs/
 /wandb/
