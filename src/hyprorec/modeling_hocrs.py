@@ -73,9 +73,17 @@ def _ensure_lm_head_accessors(model: nn.Module) -> nn.Module:
 
 def _backbone_from_config(config) -> nn.Module:
     if config.model_type == "qwen2_5_omni":
+        thinker_config = getattr(config, "thinker_config", None)
+        if thinker_config is not None:
+            from transformers import Qwen2_5OmniThinkerForConditionalGeneration
+
+            thinker = Qwen2_5OmniThinkerForConditionalGeneration(thinker_config)
+            return _ensure_lm_head_accessors(thinker)
         from transformers import Qwen2_5OmniForConditionalGeneration
 
-        return Qwen2_5OmniForConditionalGeneration(config)
+        return _ensure_lm_head_accessors(
+            Qwen2_5OmniForConditionalGeneration(config)
+        )
     if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
@@ -549,9 +557,18 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             embeds[graph["hyperedge_positions"][:, 0], graph["hyperedge_positions"][:, 1]] = projected[node_count:].to(embeds.dtype)
         return embeds
 
+    def _decoder_model(self) -> nn.Module:
+        for name in ("model", "transformer", "language_model"):
+            decoder = getattr(self.backbone, name, None)
+            if isinstance(decoder, nn.Module):
+                return decoder
+        raise AttributeError("backbone does not expose a decoder module")
+
     def encode(self, input_ids, attention_mask=None, hypergraphs=None, **kwargs):
         kwargs.pop("return_dict", None)
-        kwargs.pop("output_hidden_states", None)
+        requested_hidden_states = kwargs.pop("output_hidden_states", False)
+        labels = kwargs.pop("labels", None)
+        kwargs.pop("inputs_embeds", None)
         use_cache = kwargs.pop("use_cache", not self.training)
         cache = kwargs.get("past_key_values")
         cached_step = cache is not None and cache.get_seq_length() > 0
@@ -562,16 +579,41 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             if cached_step
             else self._inject(input_ids, hypergraphs or {})
         )
-        if self.config.backbone_config.model_type == "qwen2_5_omni_thinker":
-            kwargs["input_ids"] = input_ids
-        return self.backbone(
+        decoder = self._decoder_model()
+        decoder_output = decoder(
             inputs_embeds=embeds,
             attention_mask=attention_mask,
-            output_hidden_states=True,
+            output_hidden_states=requested_hidden_states,
             return_dict=True,
             use_cache=use_cache,
             **kwargs,
         )
+        hidden = decoder_output.last_hidden_state
+        logits = self.get_output_embeddings()(hidden)
+        loss = None
+        if labels is not None:
+            loss = F.cross_entropy(
+                logits[..., :-1, :].contiguous().view(-1, logits.size(-1)),
+                labels[..., 1:].contiguous().view(-1),
+                ignore_index=-100,
+            )
+        if self.training and labels is not None:
+            logits = None
+        hidden_states = decoder_output.hidden_states
+        if hidden_states is None:
+            hidden_states = (hidden,)
+        output = ModelOutput(
+            loss=loss,
+            logits=logits,
+            past_key_values=decoder_output.past_key_values,
+            hidden_states=hidden_states,
+            attentions=getattr(decoder_output, "attentions", None),
+        )
+        for name in ("rope_deltas", "cache_position"):
+            value = getattr(decoder_output, name, None)
+            if value is not None:
+                output[name] = value
+        return output
 
 
 class HoCRSRecommendationModel(HoCRSBaseModel):
@@ -606,8 +648,6 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
             **kwargs,
         )
         hidden = output.hidden_states[-1]
-        # Only the final layer is used by the recommendation head.
-        output.hidden_states = (hidden,)
         if pooling_mask is None:
             pooling_mask = attention_mask.bool()
         recommendation = self.recommendation_head(
@@ -619,7 +659,7 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
         loss = recommendation_loss + self.config.conversation_loss_weight * conversation_loss
         return HoCRSRecommendationOutput(
             loss=loss,
-            logits=recommendation.logits,
+            logits=output.logits,
             recommendation_logits=recommendation.logits,
             fusion_loss=recommendation.fusion_loss,
             view_loss=recommendation.view_loss,
