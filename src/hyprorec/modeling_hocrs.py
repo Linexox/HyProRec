@@ -137,18 +137,27 @@ class GraphTokenMoE(nn.Module):
             nn.init.zeros_(expert[-1].bias)
 
     def forward(
-        self, features: torch.Tensor, view: str, return_diagnostics: bool = False
+        self,
+        features: torch.Tensor,
+        view: str,
+        return_diagnostics: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        view_embedding = self.view_embeddings[self.view_to_index[view]].expand(features.size(0), -1)
-        router_input = torch.cat((features, view_embedding.to(features.dtype)), dim=-1).float()
-        weights = F.softmax(self.router(router_input), dim=-1)
+        
+        view_index = self.view_to_index[view]
+        view_embedding = self.view_embeddings[view_index]
+        view_embedding = view_embedding.expand(features.size(0), -1)
+        router_input = torch.cat((features, view_embedding.to(features.dtype)), dim=-1)
+        router_input = router_input.float()
         outputs = torch.stack([expert(features) for expert in self.experts], dim=1)
+        weights = F.softmax(self.router(router_input), dim=-1)
         delta = (weights.to(outputs.dtype).unsqueeze(-1) * outputs).sum(dim=1)
-        transformed = (
-            features
-            + self.residual_scales[self.view_to_index[view]].to(features.dtype) * delta
-        )
-        return (transformed, weights) if return_diagnostics else transformed
+        scale = self.residual_scales[view_index].to(features.dtype)
+        transformed = features + scale * delta
+
+        if return_diagnostics:
+            return transformed, weights
+        else:
+            return transformed
 
 
 class ViewAttentionPooling(nn.Module):

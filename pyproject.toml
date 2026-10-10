@@ -26,14 +26,14 @@ dependencies = [
     "safetensors",
 ]
 
-[[tool.uv.index]]
-name = "tsinghua"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
+# [[tool.uv.index]]
+# name = "tsinghua"
+# url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+# default = true
 
-[[tool.uv.index]]
-name = "aliyun"
-url = "https://mirrors.aliyun.com/pypi/simple"
+# [[tool.uv.index]]
+# name = "aliyun"
+# url = "https://mirrors.aliyun.com/pypi/simple"
 
 [[tool.uv.index]]
 name = "pytorch-cu118"
