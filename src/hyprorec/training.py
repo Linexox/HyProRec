@@ -6,6 +6,37 @@ import math
 
 import torch
 from transformers import Trainer
+from transformers.trainer_callback import TrainerCallback
+
+
+def validation_steps(updates_per_epoch: int, total_steps: int) -> tuple[int, ...]:
+    """Return up to four evenly spaced optimizer steps for each epoch."""
+
+    if updates_per_epoch < 1 or total_steps < 1:
+        return ()
+
+    steps = []
+    for epoch_start in range(0, total_steps, updates_per_epoch):
+        epoch_steps = min(updates_per_epoch, total_steps - epoch_start)
+        for quarter in range(1, 5):
+            step = epoch_start + math.ceil(epoch_steps * quarter / 4)
+            if step not in steps:
+                steps.append(step)
+    return tuple(steps)
+
+
+class FourValidChecksCallback(TrainerCallback):
+    """Request evaluation and checkpointing at the four scheduled steps."""
+
+    def __init__(self, steps: tuple[int, ...]):
+        self.steps = frozenset(steps)
+
+    def on_step_end(self, args, state, control, **kwargs):
+        del args, kwargs
+        if state.global_step in self.steps:
+            control.should_evaluate = True
+            control.should_save = True
+        return control
 
 
 def _as_float(value):
@@ -205,4 +236,4 @@ class HyProRecTrainer(Trainer):
         return super().log(logs, *args, **kwargs)
 
 
-__all__ = ["HyProRecTrainer"]
+__all__ = ["FourValidChecksCallback", "HyProRecTrainer", "validation_steps"]

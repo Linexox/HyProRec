@@ -16,7 +16,7 @@ from ..evaluation import build_compute_metrics
 from ..model_factory import build_model, load_modality_tables
 from ..processing_hocrs import HoCRSProcessor
 from ..provenance import save_provenance
-from ..training import HyProRecTrainer
+from ..training import FourValidChecksCallback, HyProRecTrainer, validation_steps
 from ..tracking import SwanLabTracker
 
 
@@ -34,21 +34,26 @@ def _dataset_config(data_args, table_path, *, training):
 
 
 def _configure_step_schedule(trainer, training_args):
-    """Use the configured step-based Trainer loop with four checks per epoch."""
+    """Schedule four validation/checkpoint checks per training epoch."""
 
     batches = len(trainer.get_train_dataloader())
     updates = max(1, math.ceil(batches / max(1, training_args.gradient_accumulation_steps)))
-    interval = max(1, math.ceil(updates / 4))
+    total_steps = (
+        training_args.max_steps
+        if training_args.max_steps > 0
+        else math.ceil(updates * training_args.num_train_epochs)
+    )
+    steps = validation_steps(updates, total_steps)
+    interval = max(steps, default=0) + 1
+    training_args.eval_strategy = "steps"
+    training_args.save_strategy = "steps"
     training_args.eval_steps = interval
     training_args.save_steps = interval
     training_args.save_total_limit = 2
     training_args.load_best_model_at_end = True
-    # Keep the metric requested by the experiment config.  In particular,
-    # lambda sweeps select checkpoints by validation Recall@50 rather than the
-    # lambda-weighted joint loss, which is not comparable across runs.
-    if not training_args.metric_for_best_model:
-        training_args.metric_for_best_model = "eval_loss"
-        training_args.greater_is_better = False
+    training_args.metric_for_best_model = "eval_loss"
+    training_args.greater_is_better = False
+    trainer.add_callback(FourValidChecksCallback(steps))
 
 
 def main() -> None:
