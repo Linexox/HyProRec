@@ -85,6 +85,9 @@ class HoCRSGroundingCollator:
             node_features[view] = self.feature_tables[source_view].index_select(
                 0, batch["node_ids"]
             )
+            if not self.source_dataset.has_raw_modality(source_view):
+                source_data[view] = {"feature_values": node_features[view]}
+                continue
             values = [
                 self.source_dataset[node_id][source_view]
                 for node_id in batch["node_ids"].tolist()

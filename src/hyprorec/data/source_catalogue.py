@@ -57,6 +57,11 @@ class GroundingCatalogueDataset(Dataset):
     def __len__(self) -> int:
         return len(self.texts)
 
+    def has_raw_modality(self, modality: str) -> bool:
+        if modality == "txt":
+            return True
+        return len(self._indices.get(modality, ())) == len(self.texts)
+
     def __getitem__(self, index: int) -> dict[str, Any]:
         item_id = index
         sample: dict[str, Any] = {"item_id": item_id}

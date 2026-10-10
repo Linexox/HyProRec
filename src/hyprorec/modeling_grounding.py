@@ -89,9 +89,14 @@ class HoCRSGroundingModel(PreTrainedModel):
             self.hypergraph_encoders[view] = HypergraphEncoder(graph_config)
             if view in config.source_configs:
                 source_dict = dict(config.source_configs[view])
-                source_config = AutoConfig.for_model(
-                    source_dict.pop("model_type"), **source_dict
-                )
+                model_type = source_dict.pop("model_type")
+                if model_type == "feature_projection":
+                    self.source_encoders[view] = nn.Sequential(
+                        nn.LayerNorm(source_dict["input_dim"]),
+                        nn.Linear(source_dict["input_dim"], config.output_dim),
+                    )
+                    continue
+                source_config = AutoConfig.for_model(model_type, **source_dict)
             else:
                 source_config = build_source_config(view)
             config.source_configs[view] = source_config.to_dict()
@@ -99,6 +104,8 @@ class HoCRSGroundingModel(PreTrainedModel):
         self.post_init()
 
     def encode_source(self, view, source_data):
+        if "feature_values" in source_data:
+            return self.source_encoders[view](source_data["feature_values"].float())
         output = self.source_encoders[view](**source_data).last_hidden_state
         if view in {"txt", "img"}:
             return output[:, 0]

@@ -166,6 +166,12 @@ def main() -> None:
             source_config = build_source_config(view)
             source_config.vocab_size = len(tokenizer)
             view_config.source_configs[view] = source_config.to_dict()
+        source_dataset = GroundingSourceDataset(data_args.dataset_path, (source_view,))
+        if not source_dataset.has_raw_modality(source_view):
+            view_config.source_configs[view] = {
+                "model_type": "feature_projection",
+                "input_dim": input_dims[view],
+            }
         model = HoCRSGroundingModel(view_config)
         config.source_configs.update(view_config.source_configs)
         args = copy.deepcopy(training_args)
@@ -192,7 +198,7 @@ def main() -> None:
             data_collator=HoCRSGroundingCollator(
                 {source_view: feature_tables[source_view]},
                 (view,),
-                GroundingSourceDataset(data_args.dataset_path, (source_view,)),
+                source_dataset,
                 tokenizer,
             ),
             train_dataset=train_dataset,
