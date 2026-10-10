@@ -324,6 +324,21 @@ LAB 上优先复用 `$HF_HOME` 已有模型缓存，不重复下载权重。五�
 
 
 
+## 5. 细化执行任务
+
+以下任务按依赖顺序执行；每项完成后保留可复现命令和结果，不以“能启动”代替验收：
+
+1. **R0 基线与环境**：冻结 `master` 基线和 `refactor` 分支，记录 commit、依赖版本、GPU、seed、数据切分和当前指标；本地工作区与 LAB worktree 分离，禁止触碰 LAB 既有 `core` 脏工作区。
+2. **R1 数据资产**：统一 ReDial/TG-ReDial 的样本字段和 split 语义；为每个数据集分别生成四模态离线特征、超边表和缓存索引；模型仓库只保留读取接口，数据准备脚本写入 `/data2/lhf/.DATA/<dataset>/scripts/`，通过软链接入实验。
+3. **R2 Grounding**：删除共现图入口和遗留合并脚本；逐模态训练、验证并保存最佳塔；checkpoint 必须能被 CRS 逐塔恢复，验证日志只包含四项 grounding loss。
+4. **R3 Backbone adapter**：先实现统一 tokenizer、embedding、decoder hidden、LM logits 和 generation-cache 接口，再逐个接入五类 backbone；每个 adapter 先通过 config/tokenizer/forward/generation 四级 smoke，再允许进入训练脚本。
+5. **R4 CRS 主路径**：固定 grounding 与 backbone，按四模态超图 token → MoE → backbone → AttnPooling → 全目录评分 → router/LM 的顺序重构；训练路径不保留 BPR、balance、co 或旧推荐头的参数、分支和日志。
+6. **R5 训练与记录**：支持普通 DDP 和 HSDP；以 optimizer update 为单位切分每 epoch 的四次 valid；只保留 best/last；训练后重新跑 best-valid 与 test；SwanLab 的主指标和辅助指标严格按本文件 panel 命名。
+7. **R6 性能实验**：为 tokenization、局部超图、MoE、hidden-state、checkpoint、diagnostics、generation cache 和全目录投影分别记录局部 benchmark；再做固定小数据端到端对比，只有指标、显存和 generation latency 均满足约束时才保留优化。
+8. **R7 验收与部署**：依次执行本地单测/compile、grounding 单 batch、CRS 单 batch、backbone smoke、固定回归、完整 valid/test 和速度报告；将通过验证的 commit 用 bundle 同步到 LAB worktree，并记录软链、模型路径和运行命令。
+
+当前已验证的性能实现是：`HoCRSBaseModel.encode` 直接调用 backbone decoder，默认只保留最后 hidden state，手工计算 shifted causal loss，训练态不保留词表 logits；generation 仍返回完整 LM logits 并复用 past key values。该实现必须继续通过数值等价和 cache generation 回归，不能仅凭单项 micro-benchmark 宣称达到总体加速目标。
+
 # 代码修改规范
 
 基本原则：在运算逻辑密集的区域（比如modeling_*.py 等建模的代码）尽量不要写防御性代码。防御性代码会打断阅读代码、了解方法论的思路，所以不要在主要方法论的代码中插入防御性代码。对于运算逻辑密集的区域如果实在需要，只考虑不带额外的错误提示信息的assert语句

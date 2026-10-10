@@ -5,6 +5,7 @@ The refactor uses `backbone_name_or_path` and reuses the configured Hugging Face
 | Backbone | Planned role | Current LAB status |
 | --- | --- | --- |
 | `Qwen/Qwen2.5-Omni-3B` | primary four-view backbone | available at `/data2/lhf/.MODEL/Qwen2.5-Omni-3B` |
+| `Qwen/Qwen2.5-Omni-7B` | existing large-backbone smoke/config | available in the HF cache and linked under `backbones/` |
 | `sensenova/InteractiveOmni-4B` | four-view comparison | not present in the inspected cache |
 | `llava-hf/llava-1.5-7b-hf` | text+image comparison | available in the HF cache |
 | `Qwen/Qwen2.5-VL-3B-Instruct` | text+image comparison | not present in the inspected cache |
