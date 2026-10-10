@@ -384,6 +384,7 @@ class HoCRSRecommendationOutput(SequenceClassifierOutput):
     view_loss: torch.Tensor | None = None
     conversation_loss: torch.Tensor | None = None
     conversation_logits: torch.Tensor | None = None
+    conversation_predictions: torch.Tensor | None = None
     route_weights: torch.Tensor | None = None
     view_logits: tuple[torch.Tensor, ...] | None = None
     attention_weights: dict[str, torch.Tensor] | None = None
@@ -589,23 +590,30 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             **kwargs,
         )
         hidden = decoder_output.last_hidden_state
-        logits = self.get_output_embeddings()(hidden)
+        logits = None
         loss = None
+        predictions = None
         if labels is not None:
-            loss_logits = logits.float()
+            targets = labels[..., 1:]
+            supervised = targets.ne(-100)
+            selected_hidden = hidden[..., :-1, :][supervised]
+            selected_logits = self.get_output_embeddings()(selected_hidden)
             loss = F.cross_entropy(
-                loss_logits[..., :-1, :].contiguous().view(-1, logits.size(-1)),
-                labels[..., 1:].contiguous().view(-1),
-                ignore_index=-100,
+                selected_logits.float(),
+                targets[supervised],
             )
-        if self.training and labels is not None:
-            logits = None
+            if not self.training:
+                predictions = targets.new_full(targets.shape, -100)
+                predictions[supervised] = selected_logits.argmax(dim=-1)
+        else:
+            logits = self.get_output_embeddings()(hidden)
         hidden_states = decoder_output.hidden_states
         if hidden_states is None:
             hidden_states = (hidden,)
         output = ModelOutput(
             loss=loss,
             logits=logits,
+            conversation_predictions=predictions,
             past_key_values=decoder_output.past_key_values,
             hidden_states=hidden_states,
             attentions=getattr(decoder_output, "attentions", None),
@@ -666,8 +674,9 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
             view_loss=recommendation.view_loss,
             conversation_loss=output.loss,
             # Evaluation needs teacher-forced predictions; training only needs
-            # the LM loss. Avoid FP32 conversion/DDP cloning of vocabulary logits.
-            conversation_logits=output.logits if not self.training else None,
+            # the LM loss. Only response positions enter the vocabulary head.
+            conversation_logits=output.logits,
+            conversation_predictions=output.conversation_predictions,
             route_weights=recommendation.route_weights,
             view_logits=recommendation.view_logits,
             attention_weights=recommendation.attention_weights,

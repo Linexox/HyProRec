@@ -217,7 +217,7 @@ class HyProRecTrainer(Trainer):
         recommendations = outputs.recommendation_logits.topk(
             min(50, outputs.recommendation_logits.size(-1)), dim=-1
         ).indices
-        conversation_predictions = outputs.conversation_logits[:, :-1].argmax(dim=-1)
+        conversation_predictions = outputs.conversation_predictions
         labels = (inputs["labels"].detach(), inputs["rec_labels"].detach())
         return loss, (recommendations.detach(), conversation_predictions.detach()), labels
 

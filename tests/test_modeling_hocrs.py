@@ -42,6 +42,7 @@ class BackboneEncodingTest(unittest.TestCase):
         input_ids[:, :20] = 3
         attention_mask = torch.ones_like(input_ids)
         labels = input_ids.clone()
+        labels[:, :20] = -100
         output = model.encode(
             input_ids,
             attention_mask=attention_mask,
@@ -64,8 +65,11 @@ class BackboneEncodingTest(unittest.TestCase):
         self.assertTrue(
             torch.allclose(output.hidden_states[0], reference.hidden_states[-1])
         )
-        self.assertTrue(torch.allclose(output.logits, reference.logits))
+        self.assertIsNone(output.logits)
         self.assertTrue(torch.allclose(output.loss, reference.loss))
+        expected = reference.logits[:, :-1].argmax(dim=-1)
+        expected[labels[:, 1:] == -100] = -100
+        self.assertTrue(torch.equal(output.conversation_predictions, expected))
 
         generated = model.generate(
             input_ids=input_ids[:, :21],
