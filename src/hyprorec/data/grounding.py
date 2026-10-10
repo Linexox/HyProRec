@@ -50,7 +50,7 @@ class HoCRSGroundingDataset(Dataset):
             "hypergraphs": {
                 view: self.hypergraph_table.build_local(
                     [item_id],
-                    "co" if view.startswith("co_") else view,
+                    view,
                     self.topk,
                     self.khop,
                 )
@@ -81,7 +81,7 @@ class HoCRSGroundingCollator:
             graphs = [sample["hypergraphs"][view] for sample in samples]
             batch = batch_hypergraphs(graphs)
             hypergraphs[view] = batch
-            source_view = view.removeprefix("co_")
+            source_view = view
             node_features[view] = self.feature_tables[source_view].index_select(
                 0, batch["node_ids"]
             )

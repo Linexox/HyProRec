@@ -25,7 +25,6 @@ from .modeling_hocrs import HypergraphEncoder
 
 
 def build_source_config(view: str):
-    view = view.removeprefix("co_")
     common = dict(
         hidden_size=256,
         num_hidden_layers=4,
@@ -101,7 +100,7 @@ class HoCRSGroundingModel(PreTrainedModel):
 
     def encode_source(self, view, source_data):
         output = self.source_encoders[view](**source_data).last_hidden_state
-        if view.removeprefix("co_") in {"txt", "img"}:
+        if view in {"txt", "img"}:
             return output[:, 0]
         else:
             return output.mean(dim=1)

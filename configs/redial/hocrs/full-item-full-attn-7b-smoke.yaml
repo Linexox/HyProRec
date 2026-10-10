@@ -8,16 +8,11 @@ model:
   hypergraph_num_layers: 3
   grounding_checkpoint_path: outputs/redial/hocrs/grounding-eight-towers
   item_table_view: full
-  co_feature_view: txt
   recommendation_hidden_dim: 2048
   recommendation_attention_dim: 256
   recommendation_temperature: 0.07
   recommendation_view_loss_weight: 0.2
   conversation_loss_weight: 0.1
-  use_recommendation_bpr_loss: false
-  recommendation_bpr_loss_weight: 0.0
-  use_recommendation_balance_loss: false
-  recommendation_balance_loss_weight: 0.0
 data:
   dataset_path: data/hocrs2_redial
   hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json

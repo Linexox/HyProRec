@@ -17,6 +17,7 @@ from ..model_factory import build_model, load_modality_tables
 from ..processing_hocrs import HoCRSProcessor
 from ..provenance import save_provenance
 from ..training import HyProRecTrainer
+from ..tracking import SwanLabTracker
 
 
 def _dataset_config(data_args, table_path, *, training):
@@ -53,12 +54,16 @@ def _configure_step_schedule(trainer, training_args):
 def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
+    # Tracking is handled explicitly by SwanLabTracker; avoid Trainer creating
+    # an implicit W&B integration from an older command-line override.
+    training_args.report_to = []
     set_seed(training_args.seed)
 
     tokenizer = AutoTokenizer.from_pretrained(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(tokenizer, model_args.num_prompt_tokens)
     tables = load_modality_tables(data_args, model_args)
     model = build_model(model_args, data_args, processor, tables)
+    tracker = SwanLabTracker.start(model_args, data_args, training_args, config_path)
 
     table_path = data_args.hyperedge_table_path or str(
         Path(data_args.dataset_path) / "hyperedge_table.json"
@@ -106,6 +111,7 @@ def main() -> None:
         processing_class=processor,
         compute_metrics=build_compute_metrics(tokenizer),
         attention_token_ids=processor.get_token_id_map(),
+        swanlab_tracker=tracker,
     )
     if training_args.do_train and train_dataset is not None:
         _configure_step_schedule(trainer, training_args)
@@ -140,6 +146,7 @@ def main() -> None:
         ).metrics
         trainer.log(test_metrics)
         trainer.save_metrics("test", test_metrics)
+    tracker.finish()
 
 
 if __name__ == "__main__":

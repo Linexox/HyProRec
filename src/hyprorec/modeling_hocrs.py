@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import log
 from pathlib import Path
 import re
 from typing import Mapping
@@ -199,19 +198,11 @@ class ItemTableHead(nn.Module):
         temperature: float,
         router_hidden_dim: int,
         view_loss_weight: float,
-        use_bpr_loss: bool,
-        bpr_loss_weight: float,
-        use_balance_loss: bool,
-        balance_loss_weight: float,
     ) -> None:
         super().__init__()
         self.item_view = item_view
         self.temperature = temperature
         self.view_loss_weight = view_loss_weight
-        self.use_bpr_loss = use_bpr_loss
-        self.bpr_loss_weight = bpr_loss_weight
-        self.use_balance_loss = use_balance_loss
-        self.balance_loss_weight = balance_loss_weight
         feature_dims = canonical_feature_dims(feature_dims)
         names = tuple(feature_dims) if item_view == "full" else (item_view,)
         self.names = names
@@ -271,7 +262,7 @@ class ItemTableHead(nn.Module):
             stacked_logits * route_weights.to(stacked_logits.dtype).unsqueeze(-1)
         ).sum(dim=1)
 
-        fusion_loss = view_loss = bpr_loss = balance_loss = None
+        fusion_loss = view_loss = None
         loss = None
         if labels is not None:
             fusion_loss = F.cross_entropy(fusion_logits, labels)
@@ -282,37 +273,13 @@ class ItemTableHead(nn.Module):
                 if len(self.names) > 1
                 else fusion_loss.new_zeros(())
             )
-            if self.use_bpr_loss:
-                positive = fusion_logits.gather(1, labels.unsqueeze(1))
-                pairwise = F.softplus(fusion_logits - positive)
-                pairwise = pairwise.masked_fill(
-                    F.one_hot(labels, num_classes=fusion_logits.size(-1)).bool(), 0.0
-                )
-                bpr_loss = pairwise.sum(dim=1).mean() / max(
-                    1, fusion_logits.size(-1) - 1
-                )
-            else:
-                bpr_loss = fusion_logits.new_zeros(())
-            if self.use_balance_loss:
-                mean_route = route_weights.float().mean(dim=0).clamp_min(1e-8)
-                balance_loss = (
-                    mean_route * (mean_route.log() + log(len(self.names)))
-                ).sum()
-            else:
-                balance_loss = fusion_logits.new_zeros(())
             loss = fusion_loss + self.view_loss_weight * view_loss
-            if self.use_bpr_loss:
-                loss = loss + self.bpr_loss_weight * bpr_loss
-            if self.use_balance_loss:
-                loss = loss + self.balance_loss_weight * balance_loss
 
         return RecommendationHeadOutput(
             logits=fusion_logits,
             loss=loss,
             fusion_loss=fusion_loss,
             view_loss=view_loss,
-            bpr_loss=bpr_loss,
-            balance_loss=balance_loss,
             route_weights=route_weights,
             view_logits=view_logits,
             attention_weights=attention_weights,
@@ -327,8 +294,6 @@ class RecommendationHeadOutput(ModelOutput):
     logits: torch.Tensor | None = None
     fusion_loss: torch.Tensor | None = None
     view_loss: torch.Tensor | None = None
-    bpr_loss: torch.Tensor | None = None
-    balance_loss: torch.Tensor | None = None
     route_weights: torch.Tensor | None = None
     view_logits: tuple[torch.Tensor, ...] | None = None
     attention_weights: dict[str, torch.Tensor] | None = None
@@ -342,8 +307,6 @@ class HoCRSRecommendationOutput(SequenceClassifierOutput):
 
     fusion_loss: torch.Tensor | None = None
     view_loss: torch.Tensor | None = None
-    bpr_loss: torch.Tensor | None = None
-    balance_loss: torch.Tensor | None = None
     conversation_loss: torch.Tensor | None = None
     conversation_logits: torch.Tensor | None = None
     route_weights: torch.Tensor | None = None
@@ -383,9 +346,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         self.soft_prompt_embeddings = nn.Embedding(config.num_prompt_tokens, hidden_size)
         self.hypergraph_encoders = nn.ModuleDict()
         self.hypergraph_projectors = nn.ModuleDict()
-        needed = {view for view in config.views if view != "co"}
-        if "co" in config.views:
-            needed.add(config.co_feature_view)
+        needed = set(config.views)
         # Keep graph-side feature buffers for all loaded item modalities for
         # checkpoint/API compatibility.  Recommendation reads the separate
         # ``item_*_feature_table`` buffers below, so the two paths remain
@@ -445,9 +406,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         else:
             state = torch.load(directory / "pytorch_model.bin", map_location="cpu")
         for view, encoder in self.hypergraph_encoders.items():
-            grounding_view = (
-                f"co_{self.config.co_feature_view}" if view == "co" else view
-            )
+            grounding_view = view
             prefix = f"hypergraph_encoders.{grounding_view}."
             encoder.load_state_dict(
                 {
@@ -492,7 +451,6 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         return self
 
     def _inject(self, input_ids, hypergraphs):
-        self._last_graph_moe_diagnostics = {}
         embeds = self.get_input_embeddings()(input_ids).clone()
         prompt_positions = input_ids == self.config.prompt_token_id
         prompt_ids = torch.arange(
@@ -504,32 +462,15 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             .to(embeds.dtype)
         )
         for view, graph in hypergraphs.items():
-            feature_view = self.config.co_feature_view if view == "co" else view
-            node_features = getattr(self, f"{feature_view}_feature_table").index_select(0, graph["node_ids"])
+            node_features = getattr(self, f"{view}_feature_table").index_select(0, graph["node_ids"])
             encoded = self.hypergraph_encoders[view](node_features, graph["hyperedge_index"], int(graph["edge_ptr"][-1]))
             projected_graph = self.hypergraph_projectors[view](encoded)
-            projected, router_weights = self.graph_moe(
+            projected = self.graph_moe(
                 view=view,
                 features=torch.cat(
                     (projected_graph.node_features, projected_graph.hyperedge_features)
                 ),
-                return_diagnostics=True,
             )
-            router_weights = router_weights.float()
-            expert_mean = router_weights.mean(dim=0)
-            top1 = router_weights.argmax(dim=-1)
-            top1_fraction = F.one_hot(
-                top1, num_classes=self.graph_moe.num_experts
-            ).float().mean(dim=0)
-            entropy = -(
-                router_weights.clamp_min(1e-8) * router_weights.clamp_min(1e-8).log()
-            ).sum(dim=-1).mean()
-            self._last_graph_moe_diagnostics[view] = {
-                "expert_mean": expert_mean,
-                "entropy": entropy,
-                "top1_fraction": top1_fraction,
-                "dead_expert_fraction": (top1_fraction == 0).float().mean(),
-            }
             node_count = graph["node_positions"].size(0)
             embeds[graph["node_positions"][:, 0], graph["node_positions"][:, 1]] = projected[:node_count].to(embeds.dtype)
             embeds[graph["hyperedge_positions"][:, 0], graph["hyperedge_positions"][:, 1]] = projected[node_count:].to(embeds.dtype)
@@ -538,7 +479,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
     def encode(self, input_ids, attention_mask=None, hypergraphs=None, **kwargs):
         kwargs.pop("return_dict", None)
         kwargs.pop("output_hidden_states", None)
-        kwargs.pop("use_cache", None)
+        use_cache = kwargs.pop("use_cache", not self.training)
         cache = kwargs.get("past_key_values")
         cached_step = cache is not None and cache.get_seq_length() > 0
         if cached_step:
@@ -555,7 +496,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             attention_mask=attention_mask,
             output_hidden_states=True,
             return_dict=True,
-            use_cache=False,
+            use_cache=use_cache,
             **kwargs,
         )
 
@@ -572,10 +513,6 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
             config.recommendation_temperature,
             config.recommendation_router_hidden_dim,
             config.recommendation_view_loss_weight,
-            config.use_recommendation_bpr_loss,
-            config.recommendation_bpr_loss_weight,
-            config.use_recommendation_balance_loss,
-            config.recommendation_balance_loss_weight,
         )
 
     def forward(
@@ -613,8 +550,6 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
             recommendation_logits=recommendation.logits,
             fusion_loss=recommendation.fusion_loss,
             view_loss=recommendation.view_loss,
-            bpr_loss=recommendation.bpr_loss,
-            balance_loss=recommendation.balance_loss,
             conversation_loss=output.loss,
             # Evaluation needs teacher-forced predictions; training only needs
             # the LM loss. Avoid FP32 conversion/DDP cloning of vocabulary logits.

@@ -21,9 +21,10 @@ def _as_float(value):
 class HyProRecTrainer(Trainer):
     """Add model diagnostics and unified recommendation/dialogue predictions."""
 
-    def __init__(self, *args, attention_token_ids=None, **kwargs):
+    def __init__(self, *args, attention_token_ids=None, swanlab_tracker=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.attention_token_ids = attention_token_ids or {}
+        self.swanlab_tracker = swanlab_tracker
         self._diagnostic_sum = {}
         self._diagnostic_count = {}
 
@@ -133,15 +134,17 @@ class HyProRecTrainer(Trainer):
             "loss",
             "fusion_loss",
             "view_loss",
-            "bpr_loss",
-            "balance_loss",
             "conversation_loss",
         ):
             field = "total" if name == "loss" else name.removesuffix("_loss")
             self._record(f"loss/{field}", getattr(outputs, name, None), prefix)
 
+        collect_auxiliary = (
+            not model.training
+            or self.state.global_step % max(1, self.args.logging_steps) == 0
+        )
         route = getattr(outputs, "route_weights", None)
-        if route is not None:
+        if route is not None and collect_auxiliary:
             route = route.float()
             means = route.mean(dim=0)
             head = self._unwrapped(model).recommendation_head
@@ -160,28 +163,10 @@ class HyProRecTrainer(Trainer):
             )
             self._record("rec_router/std", route.std(unbiased=False), prefix)
 
-        for view, values in (getattr(outputs, "graph_moe_diagnostics", None) or {}).items():
-            for index, value in enumerate(values.get("expert_mean", ())):
-                self._record(f"graph_moe/{view}/expert_{index}_mean", value, prefix)
-            self._record(f"graph_moe/{view}/entropy", values.get("entropy"), prefix)
-            for index, value in enumerate(values.get("top1_fraction", ())):
-                self._record(
-                    f"graph_moe/{view}/expert_{index}_top1_fraction", value, prefix
-                )
-            top1_fraction = values.get("top1_fraction")
-            if top1_fraction is not None:
-                self._record(
-                    f"graph_moe/{view}/top1_fraction", top1_fraction.max(), prefix
-                )
-            self._record(
-                f"graph_moe/{view}/dead_expert_fraction",
-                values.get("dead_expert_fraction"),
-                prefix,
+        if collect_auxiliary:
+            self._attention_diagnostics(
+                inputs, getattr(outputs, "attention_weights", None), prefix
             )
-
-        self._attention_diagnostics(
-            inputs, getattr(outputs, "attention_weights", None), prefix
-        )
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         with self.compute_loss_context_manager():
@@ -215,6 +200,8 @@ class HyProRecTrainer(Trainer):
             logs[key] = total / max(1, self._diagnostic_count[key])
         self._diagnostic_sum.clear()
         self._diagnostic_count.clear()
+        if self.swanlab_tracker is not None and self.is_world_process_zero():
+            self.swanlab_tracker.log_trainer(logs)
         return super().log(logs, *args, **kwargs)
 
 

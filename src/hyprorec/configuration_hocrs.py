@@ -8,7 +8,7 @@ from transformers import AutoConfig, GPT2Config, PretrainedConfig
 
 from .constants import GRAPH_VIEWS, MODALITIES
 
-ALL_GRAPH_VIEWS = (*GRAPH_VIEWS, "co")
+ALL_GRAPH_VIEWS = GRAPH_VIEWS
 
 
 def canonical_feature_dims(
@@ -86,12 +86,10 @@ class HoCRSConfig(PretrainedConfig):
         backbone_config: PretrainedConfig | dict[str, Any] | None = None,
         recommendation_head: str = "item_table",
         views: list[str] | tuple[str, ...] = ALL_GRAPH_VIEWS,
-        co_feature_view: str = "txt",
         txt_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         img_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         ado_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         vdo_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
-        co_hypergraph_config: HoCRSHypergraphConfig | dict[str, Any] | None = None,
         num_items: int = 6924,
         item_feature_dims: dict[str, int] | None = None,
         item_table_view: str = "txt",
@@ -100,10 +98,6 @@ class HoCRSConfig(PretrainedConfig):
         recommendation_attention_dim: int = 256,
         recommendation_temperature: float = 0.07,
         recommendation_view_loss_weight: float = 0.2,
-        use_recommendation_bpr_loss: bool = False,
-        recommendation_bpr_loss_weight: float = 0.0,
-        use_recommendation_balance_loss: bool = False,
-        recommendation_balance_loss_weight: float = 0.0,
         conversation_loss_weight: float = 1.0,
         recommendation_router_hidden_dim: int = 512,
         num_prompt_tokens: int = 20,
@@ -121,8 +115,6 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("Only the item_table recommendation head is supported.")
         if set(views) - set(ALL_GRAPH_VIEWS):
             raise ValueError(f"views must contain each graph view at most once: {ALL_GRAPH_VIEWS}")
-        if co_feature_view not in MODALITIES:
-            raise ValueError(f"co_feature_view must be one of {MODALITIES}.")
         if item_table_view not in (*MODALITIES, "full"):
             raise ValueError("item_table_view must be a modality or full.")
         if (
@@ -137,23 +129,10 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("recommendation_temperature must be positive.")
         if recommendation_view_loss_weight < 0:
             raise ValueError("recommendation_view_loss_weight must be non-negative.")
-        if recommendation_bpr_loss_weight < 0:
-            raise ValueError("recommendation_bpr_loss_weight must be non-negative.")
-        if use_recommendation_bpr_loss and recommendation_bpr_loss_weight <= 0:
-            raise ValueError(
-                "recommendation_bpr_loss_weight must be positive when BPR loss is enabled."
-            )
-        if recommendation_balance_loss_weight < 0:
-            raise ValueError("recommendation_balance_loss_weight must be non-negative.")
-        if use_recommendation_balance_loss and recommendation_balance_loss_weight <= 0:
-            raise ValueError(
-                "recommendation_balance_loss_weight must be positive when balance loss is enabled."
-            )
         if conversation_loss_weight < 0:
             raise ValueError("conversation_loss_weight must be non-negative.")
         self.recommendation_head = recommendation_head
         self.views = views
-        self.co_feature_view = co_feature_view
         self.num_items = num_items
         self.item_feature_dims = canonical_feature_dims(item_feature_dims)
         self.item_table_view = item_table_view
@@ -162,10 +141,6 @@ class HoCRSConfig(PretrainedConfig):
         self.recommendation_attention_dim = recommendation_attention_dim
         self.recommendation_temperature = recommendation_temperature
         self.recommendation_view_loss_weight = recommendation_view_loss_weight
-        self.use_recommendation_bpr_loss = use_recommendation_bpr_loss
-        self.recommendation_bpr_loss_weight = recommendation_bpr_loss_weight
-        self.use_recommendation_balance_loss = use_recommendation_balance_loss
-        self.recommendation_balance_loss_weight = recommendation_balance_loss_weight
         self.conversation_loss_weight = conversation_loss_weight
         self.recommendation_router_hidden_dim = recommendation_router_hidden_dim
         self.num_prompt_tokens = num_prompt_tokens
@@ -175,7 +150,6 @@ class HoCRSConfig(PretrainedConfig):
         self.img_hypergraph_config = _graph_config(img_hypergraph_config)
         self.ado_hypergraph_config = _graph_config(ado_hypergraph_config)
         self.vdo_hypergraph_config = _graph_config(vdo_hypergraph_config)
-        self.co_hypergraph_config = _graph_config(co_hypergraph_config)
 
     def get_hypergraph_config(self, view: str) -> HoCRSHypergraphConfig:
         return getattr(self, f"{view}_hypergraph_config")

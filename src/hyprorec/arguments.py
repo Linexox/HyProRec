@@ -28,15 +28,10 @@ class ModelArguments:
     grounding_temperature: float = 0.07
     grounding_tokenizer_name_or_path: str = "sentence-transformers/all-mpnet-base-v2"
     item_table_view: str = "txt"
-    co_feature_view: str = "txt"
     recommendation_hidden_dim: int = 2048
     recommendation_attention_dim: int = 256
     recommendation_temperature: float = 0.07
     recommendation_view_loss_weight: float = 0.2
-    use_recommendation_bpr_loss: bool = False
-    recommendation_bpr_loss_weight: float = 0.0
-    use_recommendation_balance_loss: bool = False
-    recommendation_balance_loss_weight: float = 0.0
     conversation_loss_weight: float = 1.0
     recommendation_router_hidden_dim: int = 512
 
@@ -45,8 +40,6 @@ class ModelArguments:
             raise ValueError("Only the item_table recommendation head is supported.")
         if self.item_table_view not in (*MODALITIES, "full"):
             raise ValueError("item_table_view must be a modality or full.")
-        if self.co_feature_view not in MODALITIES:
-            raise ValueError(f"co_feature_view must be one of {MODALITIES}.")
         if (
             self.num_prompt_tokens != 20
             or self.recommendation_hidden_dim < 1
@@ -59,16 +52,8 @@ class ModelArguments:
             raise ValueError("recommendation_router_hidden_dim must be positive.")
         if (
             self.recommendation_view_loss_weight < 0
-            or self.recommendation_bpr_loss_weight < 0
-            or self.recommendation_balance_loss_weight < 0
         ):
             raise ValueError("Recommendation loss weights must be non-negative.")
-        if self.use_recommendation_bpr_loss and self.recommendation_bpr_loss_weight <= 0:
-            raise ValueError(
-                "recommendation_bpr_loss_weight must be positive when BPR loss is enabled."
-            )
-        if self.use_recommendation_balance_loss and self.recommendation_balance_loss_weight <= 0:
-            raise ValueError("Balance loss weight must be positive when enabled.")
         if self.conversation_loss_weight < 0:
             raise ValueError("conversation_loss_weight must be non-negative.")
 
@@ -93,16 +78,14 @@ class DataArguments:
         if set(self.views) - set(ALL_GRAPH_VIEWS):
             raise ValueError(f"Unknown or duplicated graph views: {self.views}")
         if self.grounding_views is not None:
-            allowed_grounding_views = set(MODALITIES) | {
-                f"co_{view}" for view in MODALITIES
-            }
+            allowed_grounding_views = set(MODALITIES)
             if (
                 not self.grounding_views
                 or len(set(self.grounding_views)) != len(self.grounding_views)
                 or set(self.grounding_views) - allowed_grounding_views
             ):
                 raise ValueError(
-                    "grounding_views must contain unique modality or co-modality views."
+                    "grounding_views must contain unique semantic modality views."
                 )
         if not 0 <= self.topk <= 10:
             raise ValueError("topk must be between 0 and 10.")

@@ -54,7 +54,6 @@ def prepare_dataset(source: Path, output: Path) -> None:
         ).hexdigest(),
         "topology_topk": 10,
         "semantic_edges": "cosine nearest neighbours per modality",
-        "co_edges": "train conversations only",
     }
     (output / "provenance.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"

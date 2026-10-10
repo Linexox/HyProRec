@@ -8,16 +8,11 @@ model:
   hypergraph_num_layers: 3
   grounding_checkpoint_path: outputs/redial/hocrs/grounding-eight-towers
   item_table_view: txt
-  co_feature_view: txt
   recommendation_hidden_dim: 2048
   recommendation_attention_dim: 256
   recommendation_temperature: 0.07
   recommendation_view_loss_weight: 0.0
   conversation_loss_weight: 1.0
-  use_recommendation_bpr_loss: false
-  recommendation_bpr_loss_weight: 0.0
-  use_recommendation_balance_loss: false
-  recommendation_balance_loss_weight: 0.0
 data:
   dataset_path: data/hocrs2_redial
   hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
@@ -57,7 +52,7 @@ training:
   save_total_limit: 2
   logging_strategy: steps
   logging_steps: 20
-  report_to: wandb
+  report_to: []
   run_name: only-txt-attn
   seed: 42
   data_seed: 42

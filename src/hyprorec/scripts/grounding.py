@@ -23,9 +23,19 @@ from ..data.grounding import (
 )
 from ..data.hypergraph import HypergraphTable
 from ..modeling_grounding import HoCRSGroundingModel, build_source_config
+from ..tracking import SwanLabTracker
 
 
 class GroundingTrainer(Trainer):
+    def __init__(self, *args, swanlab_tracker=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.swanlab_tracker = swanlab_tracker
+
+    def log(self, logs, *args, **kwargs):
+        if self.swanlab_tracker is not None and self.is_world_process_zero():
+            self.swanlab_tracker.log(logs)
+        return super().log(logs, *args, **kwargs)
+
     def create_optimizer(self):
         if self.optimizer is None:
             self.optimizer = torch.optim.AdamW(
@@ -57,14 +67,13 @@ def _load_feature_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
 def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
+    training_args.report_to = []
     set_seed(training_args.seed)
-    views = tuple(
-        data_args.grounding_views
-        or (*MODALITIES, *(f"co_{view}" for view in MODALITIES))
-    )
+    tracker = SwanLabTracker.start(model_args, data_args, training_args, config_path)
+    views = tuple(data_args.grounding_views or MODALITIES)
     feature_tables = _load_feature_tables(data_args)
     input_dims = {
-        view: feature_tables[view.removeprefix("co_")].size(1) for view in views
+        view: feature_tables[view].size(1) for view in views
     }
     config = HoCRSGroundingConfig(
         views=views,
@@ -89,7 +98,7 @@ def main() -> None:
         view_config = copy.deepcopy(config)
         view_config.views = (view,)
         tokenizer = None
-        source_view = view.removeprefix("co_")
+        source_view = view
         if source_view == "txt":
             tokenizer = AutoTokenizer.from_pretrained(
                 model_args.grounding_tokenizer_name_or_path
@@ -127,6 +136,7 @@ def main() -> None:
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+            swanlab_tracker=tracker,
         )
         result = trainer.train(
             resume_from_checkpoint=training_args.resume_from_checkpoint
@@ -145,11 +155,6 @@ def main() -> None:
                 "checkpoint": trainer.state.best_model_checkpoint,
                 "eval_loss": trainer.state.best_metric,
             }
-
-            if "wandb" in args.report_to:
-                import wandb
-
-                wandb.finish()
 
         trainer.accelerator.wait_for_everyone()
         is_main_process = trainer.is_world_process_zero()
@@ -188,6 +193,7 @@ def main() -> None:
             ),
             encoding="utf-8",
         )
+    tracker.finish()
 
 
 if __name__ == "__main__":

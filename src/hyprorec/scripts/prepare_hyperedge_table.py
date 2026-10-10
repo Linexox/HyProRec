@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-from collections import Counter, defaultdict
-from itertools import combinations
 from pathlib import Path
 
 import torch
@@ -69,32 +66,6 @@ def prepare_hyperedge_table(
         table[modality] = [
             [anchor_id, *neighbors[anchor_id]] for anchor_id in range(num_items)
         ]
-
-    counts: dict[int, Counter[int]] = defaultdict(Counter)
-    conversations = json.loads(
-        (dataset_dir / "train_data.json").read_text(encoding="utf-8")
-    )
-    for conversation in conversations:
-        items = {
-            int(item)
-            for turn in conversation["dialog"]
-            for item in turn.get("items", [])
-        }
-        for left, right in combinations(sorted(items), 2):
-            counts[left][right] += 1
-            counts[right][left] += 1
-    table["co"] = [
-        [
-            anchor,
-            *(
-                neighbor
-                for neighbor, _ in sorted(
-                    counts[anchor].items(), key=lambda pair: (-pair[1], pair[0])
-                )[:topk]
-            ),
-        ]
-        for anchor in range(num_items)
-    ]
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as file:

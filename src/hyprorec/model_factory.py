@@ -16,9 +16,7 @@ from .processing_hocrs import HoCRSProcessor
 def load_modality_tables(
     data_args: DataArguments, model_args: ModelArguments
 ) -> dict[str, torch.Tensor]:
-    graph_views = {view for view in data_args.views if view in MODALITIES}
-    if "co" in data_args.views:
-        graph_views.add(model_args.co_feature_view)
+    graph_views = set(data_args.views)
     item_views = (
         set(MODALITIES)
         if model_args.item_table_view == "full"
@@ -46,9 +44,8 @@ def build_model(
     num_items = next(iter(tables.values())).size(0)
     graph_configs = {}
     for view in data_args.views:
-        feature_view = model_args.co_feature_view if view == "co" else view
         graph_configs[view] = HoCRSHypergraphConfig(
-            input_dim=tables[feature_view].size(1),
+            input_dim=tables[view].size(1),
             hidden_dim=model_args.hypergraph_hidden_dim,
             output_dim=model_args.hypergraph_output_dim,
             num_layers=model_args.hypergraph_num_layers,
@@ -58,7 +55,6 @@ def build_model(
         backbone_config=backbone.config,
         recommendation_head=model_args.recommendation_head,
         views=data_args.views,
-        co_feature_view=model_args.co_feature_view,
         num_items=num_items,
         item_feature_dims={view: table.size(1) for view, table in tables.items()},
         item_table_view=model_args.item_table_view,
@@ -67,10 +63,6 @@ def build_model(
         recommendation_attention_dim=model_args.recommendation_attention_dim,
         recommendation_temperature=model_args.recommendation_temperature,
         recommendation_view_loss_weight=model_args.recommendation_view_loss_weight,
-        use_recommendation_bpr_loss=model_args.use_recommendation_bpr_loss,
-        recommendation_bpr_loss_weight=model_args.recommendation_bpr_loss_weight,
-        use_recommendation_balance_loss=model_args.use_recommendation_balance_loss,
-        recommendation_balance_loss_weight=model_args.recommendation_balance_loss_weight,
         conversation_loss_weight=model_args.conversation_loss_weight,
         recommendation_router_hidden_dim=model_args.recommendation_router_hidden_dim,
         num_prompt_tokens=model_args.num_prompt_tokens,
