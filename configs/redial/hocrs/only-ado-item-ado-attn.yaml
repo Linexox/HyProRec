@@ -14,8 +14,8 @@ model:
   recommendation_view_loss_weight: 0.0
   conversation_loss_weight: 1.0
 data:
-  dataset_path: data/hocrs2_redial
-  hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
+  dataset_path: data/hyprorec-redial
+  hyperedge_table_path: data/hyprorec-redial/hyperedge_table.json
   embeddings_dir_name: embeddings
   views: [ado]
   topk: 3

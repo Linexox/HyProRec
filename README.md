@@ -20,7 +20,7 @@ The graph preparation command writes ten cosine-similarity candidates per
 anchor for each semantic view:
 
 ```bash
-python -m hyprorec.scripts.prepare_hyperedge_table --dataset-dir data/hocrs2_redial --topk 10
+python -m hyprorec.scripts.prepare_hyperedge_table --dataset-dir data/hyprorec-redial --topk 10
 ```
 
 Training can select the first `topk` neighbors or randomly sample `topk` from

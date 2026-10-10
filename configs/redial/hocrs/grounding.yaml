@@ -11,8 +11,8 @@ model:
   grounding_temperature: 0.07
 
 data:
-  dataset_path: data/hocrs2_redial
-  hyperedge_table_path: data/hocrs2_redial/hyperedge_table.json
+  dataset_path: data/hyprorec-redial
+  hyperedge_table_path: data/hyprorec-redial/hyperedge_table.json
   embeddings_dir_name: embeddings
   views: [txt, img, ado, vdo, ]
   topk: 3
