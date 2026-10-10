@@ -592,8 +592,9 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         logits = self.get_output_embeddings()(hidden)
         loss = None
         if labels is not None:
+            loss_logits = logits.float()
             loss = F.cross_entropy(
-                logits[..., :-1, :].contiguous().view(-1, logits.size(-1)),
+                loss_logits[..., :-1, :].contiguous().view(-1, logits.size(-1)),
                 labels[..., 1:].contiguous().view(-1),
                 ignore_index=-100,
             )
