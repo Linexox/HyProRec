@@ -26,13 +26,13 @@ def load_backbone(name_or_path: str) -> nn.Module:
         from transformers import Qwen2_5OmniForConditionalGeneration
 
         return Qwen2_5OmniForConditionalGeneration.from_pretrained(
-            name_or_path, dtype="auto"
+            name_or_path, torch_dtype="auto"
         )
     if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
         return Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
-            name_or_path, dtype="auto"
+            name_or_path, torch_dtype="auto"
         )
     return AutoModelForCausalLM.from_pretrained(name_or_path)
 
