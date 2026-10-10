@@ -132,7 +132,11 @@ def _hidden_size(config) -> int:
     for name in ("hidden_size", "n_embd", "d_model"):
         if getattr(config, name, None) is not None:
             return int(getattr(config, name))
-    return int(config.text_config.hidden_size)
+    for name in ("text_config", "llm_config"):
+        nested = getattr(config, name, None)
+        if nested is not None:
+            return _hidden_size(nested)
+    raise AttributeError("backbone config has no hidden size")
 
 
 @dataclass
