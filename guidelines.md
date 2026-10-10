@@ -231,6 +231,98 @@ train和val中，记录细分的三项loss，总loss,推荐@1,10,50、对话指�
 然后考虑到W&B不再支持，所以我们的日志记录需要改为SWANLAB.在训练逻辑相关的脚本中通过加载dotenv中的SWANLAB的API KEY登陆对应的linexox账号
 
 
+# 重构执行计划
+
+重构目标是在 `refactor` 分支中重新组织 HyProRec 的数据、模型、训练和实验记录代码，同时保持本文件方法论中的 grounding、超图 token、推荐融合和对话目标。重构从当前 master 提交 `8fc6861` 建立，现有工作区内容已作为基线提交保存。代码修改不得删除本文件已有的方法论、LAB 操作规范和代码修改规范。
+
+## 1. 代码结构重构
+
+### 1.1 数据接口
+
+统一 ReDial 和 TG-ReDial 的样本为
+
+$$
+(c,\mathcal I_c,y,w),
+$$
+
+其中 $c$ 为对话历史，$\mathcal I_c$ 为历史物品，$y$ 为目标物品，$w$ 为目标回复。数据层负责生成局部超图、图 token 位置、推荐标签和语言模型标签；训练期间不得反复读取原始多模态文件或重复执行相同的 tokenization。
+
+离线特征与超边表属于数据资产。数据准备脚本放在 `/data2/lhf/.DATA` 对应数据集目录的 `scripts/` 中，模型代码只通过配置和软链访问。ReDial 与 TG-ReDial 的超边表分别重新计算，不直接复用 HoCRS 旧项目的预计算超边表。
+
+### 1.2 Grounding
+
+Grounding 只保留 `txt`、`img`、`ado`、`vdo` 四个独立模态塔和三项对比损失。删除 `co_*` 视图、共现图训练、共现图 checkpoint 合并和只服务于共现图的配置。
+
+每个模态独立选择最佳 grounding checkpoint。Grounding 验证在每个 epoch 结束时执行，只记录总 loss 和 GA-SA、GA-SN、SA-SN 三项 loss。
+
+### 1.3 Backbone adapter
+
+不同 backbone 通过统一接口接入 CRS：
+
+```text
+load_tokenizer()
+load_model()
+get_input_embeddings()
+encode_condition()
+get_last_hidden_state()
+compute_lm_logits()
+prepare_generation_cache()
+```
+
+首批适配模型为 Qwen2.5-Omni-3B、InteractiveOmni-4B、LLaVA-1.5-7B、Qwen2.5-VL-3B-Instruct、Qwen2.5-3B-Instruct。Omni 模型使用 thinker 或对应的文本生成子模块；不同模型的 tokenizer、chat template、输入 embedding、hidden state 和 generation cache 差异只能位于 adapter 中，不能散落在训练逻辑中。
+
+每个 backbone 做两个 full 设置：HyProRec full 使用 `txt,img,ado,vdo`；模型自身 full 按原生能力使用四模态、`txt,img` 或 `txt`。图 token 仍由 HyProRec 的离线特征和超图塔提供，CRS 不重复向 backbone 原生视觉、音频或视频编码器输入原始媒体。
+
+### 1.4 CRS 主路径
+
+CRS 只保留以下结构：四个 grounding 超图塔、节点/超边投影、GraphTokenMoE、共享 backbone、四组 AttnPooling、全目录物品评分、推荐 router 和语言模型 head。删除 BPR、router balance、旧版 decoupled CRS、历史推荐头、共现图和未使用的实验旁支。
+
+CRS 默认冻结离线特征、grounding 超图塔和 backbone，只训练 soft prompt、节点/超边投影、GraphTokenMoE、AttnPooling、用户/物品投影及推荐 router。推荐与对话仍使用本文件前述联合损失和指标定义。
+
+## 2. SwanLab 记录要求
+
+训练代码从 `.env` 读取 `SWANLAB_API_KEY`，可选读取 `SWANLAB_API_HOST`，不得把凭证写入代码、配置或提交。SwanLab 项目名为 `HyProRec`。
+
+run 名使用 `only-*` 或 `full` 表示模态组合；tags 必须包含数据集、backbone、模态组合、$\lambda$、$\eta$ 和 seed。主指标写入 `train/`、`valid/`、`test/`，包括总 loss、各项 loss、Recall/MRR/NDCG@1/10/50、BLEU/DIST@1/2/3/4。辅助指标只写入 `other_train/`、`other_valid/`、`other_test/`：
+
+```text
+AttnPooling/{view}-soft-prompt-mass
+AttnPooling/{view}-context-mass
+AttnPooling/{view}-{source_view}-hypergraph-mass
+RecRouter/{view}
+```
+
+每个 CRS epoch 进行四次 valid，验证点为该 epoch optimizer update 数的四等分位置，并包含 epoch 结束点。只保留 last checkpoint 和 valid 总 loss 最小的 best checkpoint。训练结束后加载 best checkpoint，重新执行一次 valid 和 test；对话指标使用 teacher forcing。Grounding 每个 epoch 结束时验证一次。
+
+## 3. 训练和推理速度研究
+
+重构前后使用相同硬件、数据、seed、batch、序列长度和模态配置记录 step time、tokens/s、data wait、GPU 利用率、峰值显存、valid/test 时间及任务指标。每项优化必须有局部 benchmark 和端到端回归结果。
+
+优先检查以下路径：
+
+1. collator 中 history 的 tokenizer-decode-tokenizer 往返；
+2. 每个样本、每个视图重复构造局部超图；
+3. GraphTokenMoE 中逐 expert 的 Python 循环；
+4. 每次 forward 请求完整 hidden states；
+5. 冻结 backbone 仍启用 gradient checkpointing 的收益与代价；
+6. 每个训练 step 计算 attention 和 GraphMoE 诊断指标；
+7. generation 中重复注入图 token、未复用 past key values；
+8. 评估中保存完整 vocabulary logits 和重复解码；
+9. 全目录物品表的重复投影和数据搬运。
+
+优先实现缓存 tokenized history、局部超图和位置 mask，批量化 GraphTokenMoE，减少 hidden state 保存，优化 generation cache 和评估诊断。不得用 `torch.no_grad()` 阻断 soft prompt 或图 token 的输入梯度；`torch.compile`、Flash Attention 和 fused kernel 只有在五类 backbone 都能通过回归后才使用。
+
+性能验收目标为训练 tokens/s 提升至少 30%、峰值显存不增加、generation latency 不回退，且 Recall、NDCG、MRR、BLEU、DIST 与 master 的相对差异不超过 1%。
+
+## 4. LAB 部署和 smoke 验证
+
+本地提交并推送 `origin/refactor` 后，在 LAB 使用 `~/lhf/init.sh` 初始化环境，在 `/data2/lhf/HyProRec/refactor` 建立 worktree。新 worktree 不得修改 `/data2/lhf/HyProRec/core` 的现有脏工作区。
+
+LAB 上优先复用 `$HF_HOME` 已有模型缓存，不重复下载权重。五个 backbone 均需执行 config、tokenizer、单 batch forward 和单步 generation smoke；同时验证 hidden size、logits shape、graph token 注入和 checkpoint 恢复。数据集通过 `/data2/lhf/.DATA` 或现有数据目录软链提供，所有新增文件写入 `/data2/lhf`。
+
+重构完成的验收顺序为：单元测试、grounding 单 batch、CRS 单 batch、五个 backbone smoke、固定小数据集回归、完整 valid/test、速度对比和 LAB 远程运行检查。
+
+
 
 # 代码修改规范
 
