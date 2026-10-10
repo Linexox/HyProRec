@@ -20,7 +20,15 @@ from .configuration_hocrs import HoCRSConfig, canonical_feature_dims
 
 def load_backbone(name_or_path: str) -> nn.Module:
     config = AutoConfig.from_pretrained(name_or_path)
-    if config.model_type in {"qwen2_5_omni", "qwen2_5_omni_thinker"}:
+    if config.model_type == "qwen2_5_omni" and "Qwen2_5OmniModel" in (
+        getattr(config, "architectures", None) or ()
+    ):
+        from transformers import Qwen2_5OmniForConditionalGeneration
+
+        return Qwen2_5OmniForConditionalGeneration.from_pretrained(
+            name_or_path, dtype="auto"
+        )
+    if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
         return Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
@@ -30,6 +38,10 @@ def load_backbone(name_or_path: str) -> nn.Module:
 
 
 def _backbone_from_config(config) -> nn.Module:
+    if config.model_type == "qwen2_5_omni":
+        from transformers import Qwen2_5OmniForConditionalGeneration
+
+        return Qwen2_5OmniForConditionalGeneration(config)
     if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
