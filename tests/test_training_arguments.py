@@ -18,7 +18,7 @@ class DistributedArgumentsTest(unittest.TestCase):
     def test_ddp_uses_no_custom_mesh(self) -> None:
         arguments = self.build(1, 1)
         self.assertIsNone(arguments.parallelism_config)
-        self.assertIsNone(arguments.fsdp)
+        self.assertEqual(arguments.fsdp, [])
 
     def test_fsdp2_mesh(self) -> None:
         arguments = self.build(1, 2)

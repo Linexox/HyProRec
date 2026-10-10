@@ -135,8 +135,8 @@ class HoCRSTrainingArguments(TrainingArguments):
                 dp_shard_size=self.dp_shard_size,
             )
         super().__post_init__()
-        if self.dp_shard_size == 1 and getattr(self, "fsdp", None) == []:
-            self.fsdp = None
+        if self.dp_shard_size == 1 and self.fsdp is None:
+            self.fsdp = []
 
 
 __all__ = ["DataArguments", "HoCRSTrainingArguments", "ModelArguments"]
