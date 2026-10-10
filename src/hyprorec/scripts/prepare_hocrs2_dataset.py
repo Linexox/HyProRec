@@ -15,7 +15,13 @@ from ..constants import MODALITIES
 from .prepare_hyperedge_table import prepare_hyperedge_table
 
 
-def prepare_dataset(source: Path, output: Path) -> None:
+def prepare_dataset(
+    source: Path,
+    output: Path,
+    *,
+    topk: int = 10,
+    device: torch.device | None = None,
+) -> None:
     source = source.resolve()
     output.mkdir(parents=True, exist_ok=False)
     (output / "embeddings").mkdir()
@@ -38,7 +44,10 @@ def prepare_dataset(source: Path, output: Path) -> None:
         )
         shapes[view] = list(features.shape)
     prepare_hyperedge_table(
-        output, output / "hyperedge_table.json", topk=10, device=torch.device("cpu")
+        output,
+        output / "hyperedge_table.json",
+        topk=topk,
+        device=device or torch.device("cpu"),
     )
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     manifest = {
@@ -52,7 +61,8 @@ def prepare_dataset(source: Path, output: Path) -> None:
         "topology_sha256": hashlib.sha256(
             (output / "hyperedge_table.json").read_bytes()
         ).hexdigest(),
-        "topology_topk": 10,
+        "topology_topk": topk,
+        "topology_device": str(device or torch.device("cpu")),
         "semantic_edges": "cosine nearest neighbours per modality",
     }
     (output / "provenance.json").write_text(
@@ -69,5 +79,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--topk", type=int, default=10)
+    parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
-    prepare_dataset(args.source, args.output)
+    prepare_dataset(
+        args.source,
+        args.output,
+        topk=args.topk,
+        device=torch.device(args.device),
+    )
