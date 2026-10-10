@@ -337,7 +337,7 @@ LAB 上优先复用 `$HF_HOME` 已有模型缓存，不重复下载权重。五�
 7. **R6 性能实验**：为 tokenization、局部超图、MoE、hidden-state、checkpoint、diagnostics、generation cache 和全目录投影分别记录局部 benchmark；再做固定小数据端到端对比，只有指标、显存和 generation latency 均满足约束时才保留优化。
 8. **R7 验收与部署**：依次执行本地单测/compile、grounding 单 batch、CRS 单 batch、backbone smoke、固定回归、完整 valid/test 和速度报告；将通过验证的 commit 用 bundle 同步到 LAB worktree，并记录软链、模型路径和运行命令。
 
-当前已验证的性能实现是：`HoCRSBaseModel.encode` 直接调用 backbone decoder，默认只保留最后 hidden state，手工计算 shifted causal loss，训练态不保留词表 logits；generation 仍返回完整 LM logits 并复用 past key values。该实现必须继续通过数值等价和 cache generation 回归，不能仅凭单项 micro-benchmark 宣称达到总体加速目标。
+当前已验证的性能实现是：`HoCRSBaseModel.encode` 直接调用 backbone decoder，默认只保留最后 hidden state；有 labels 时只对 shifted 后的有效回复位置投影词表并计算 causal loss，评估阶段返回这些位置的 teacher-forced argmax，训练态不保留词表 logits；无 labels 的 generation 仍返回完整 LM logits 并复用 past key values。该实现必须继续通过数值等价和 cache generation 回归，不能仅凭单项 micro-benchmark 宣称达到总体加速目标。
 
 # 代码修改规范
 

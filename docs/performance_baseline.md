@@ -16,3 +16,10 @@ versus 112.95 ms, with peak allocation 9.005 versus 8.995 GiB. These are local
 backbone measurements rather than the end-to-end acceptance result; the 30% target
 still requires a fixed-data CRS comparison with the same seed, update batch, metrics,
 and generation settings.
+
+The CRS path now avoids projecting the vocabulary head at prompt and graph-token
+positions when labels are present. It projects only the shifted positions whose
+labels are valid, and reconstructs the teacher-forced argmax tensor with `-100`
+elsewhere. GPT-2 reference tests and a Qwen2.5-Omni-3B GPU smoke matched the dense
+loss and argmax results exactly. This is a correctness check; an end-to-end speed
+claim still requires the fixed-data comparison above.
