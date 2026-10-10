@@ -50,9 +50,7 @@ class ModelArguments:
             )
         if self.recommendation_router_hidden_dim < 1:
             raise ValueError("recommendation_router_hidden_dim must be positive.")
-        if (
-            self.recommendation_view_loss_weight < 0
-        ):
+        if self.recommendation_view_loss_weight < 0:
             raise ValueError("Recommendation loss weights must be non-negative.")
         if self.conversation_loss_weight < 0:
             raise ValueError("conversation_loss_weight must be non-negative.")

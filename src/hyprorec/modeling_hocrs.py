@@ -41,7 +41,10 @@ def load_backbone(name_or_path: str) -> nn.Module:
                 name_or_path, torch_dtype="auto"
             )
         )
-    if config.model_type in {"llava", "qwen2_5_vl"} or "omni" in config.model_type:
+    is_multimodal = config.model_type in {"llava", "qwen2_5_vl"} or (
+        "omni" in config.model_type
+    )
+    if is_multimodal:
         from transformers import AutoModelForImageTextToText
 
         model = AutoModelForImageTextToText.from_pretrained(name_or_path)
@@ -76,8 +79,12 @@ def _backbone_from_config(config) -> nn.Module:
     if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
-        return _ensure_lm_head_accessors(Qwen2_5OmniThinkerForConditionalGeneration(config))
-    if config.model_type in {"llava", "qwen2_5_vl"} or "omni" in config.model_type:
+        thinker = Qwen2_5OmniThinkerForConditionalGeneration(config)
+        return _ensure_lm_head_accessors(thinker)
+    is_multimodal = config.model_type in {"llava", "qwen2_5_vl"} or (
+        "omni" in config.model_type
+    )
+    if is_multimodal:
         from transformers import AutoModelForImageTextToText
 
         model = AutoModelForImageTextToText.from_config(config)
@@ -511,8 +518,14 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             .to(embeds.dtype)
         )
         for view, graph in hypergraphs.items():
-            node_features = getattr(self, f"{view}_feature_table").index_select(0, graph["node_ids"])
-            encoded = self.hypergraph_encoders[view](node_features, graph["hyperedge_index"], int(graph["edge_ptr"][-1]))
+            node_features = getattr(self, f"{view}_feature_table").index_select(
+                0, graph["node_ids"]
+            )
+            encoded = self.hypergraph_encoders[view](
+                node_features,
+                graph["hyperedge_index"],
+                int(graph["edge_ptr"][-1]),
+            )
             projected_graph = self.hypergraph_projectors[view](encoded)
             projected = self.graph_moe(
                 view=view,
