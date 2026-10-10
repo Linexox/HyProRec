@@ -43,13 +43,21 @@ class SwanLabTracker:
         dataset = Path(data_args.dataset_path).name
         backbone = Path(model_args.backbone_name_or_path).name
         views = "-".join(data_args.views)
-        name = training_args.run_name or f"{dataset}-{views}-{backbone}"
+        composition = (
+            "full"
+            if tuple(data_args.views) == ("txt", "img", "ado", "vdo")
+            else f"only-{views}"
+        )
+        requested_name = training_args.run_name
+        name = requested_name if requested_name and requested_name.startswith(("only-", "full")) else composition
         tags = [
             f"dataset:{dataset}",
             f"views:{views}",
             f"backbone:{backbone}",
             f"hidden:{model_args.recommendation_hidden_dim}",
             f"nodes:{data_args.max_hypergraph_nodes}",
+            f"lambda:{model_args.conversation_loss_weight}",
+            f"eta:{model_args.recommendation_view_loss_weight}",
             f"seed:{training_args.seed}",
         ]
         config = _flatten(
