@@ -6,7 +6,7 @@ model:
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
-  grounding_checkpoint_path: outputs/redial/hocrs/grounding-wo-co-hyprorec
+  grounding_checkpoint_path: outputs/redial/hocrs/grounding-semantic
   item_table_view: ado
   recommendation_hidden_dim: 2048
   recommendation_attention_dim: 256

@@ -126,9 +126,7 @@ class HoCRSDataCollator:
         self.max_history_tokens = max_history_tokens
         self.max_sequence_tokens = max_sequence_tokens
         tokenizer = processor.tokenizer
-        self._newline_ids = tokenizer("\n", add_special_tokens=False)["input_ids"]
-        self._role_ids: dict[str, list[int]] = {}
-        self._token_ids = processor.get_token_id_map()
+        self._history_cache: dict[str, str] = {}
         if not 0 < max_history_tokens <= 256:
             raise ValueError("max_history_tokens must be in (0, 256].")
         if max_sequence_tokens < 1:
@@ -154,33 +152,20 @@ class HoCRSDataCollator:
         prompts = []
         prompt_lengths = []
         for sample in features:
-            history = tokenizer(sample["context"], add_special_tokens=False)[
-                "input_ids"
-            ][-self.max_history_tokens :]
+            context = self._history_cache.get(sample["context"])
+            if context is None:
+                history = tokenizer(sample["context"], add_special_tokens=False)[
+                    "input_ids"
+                ][-self.max_history_tokens :]
+                context = tokenizer.decode(history, skip_special_tokens=False)
+                self._history_cache[sample["context"]] = context
             sizes = {
                 view: (graph.num_nodes, graph.num_hyperedges)
                 for view, graph in sample["hypergraphs"].items()
             }
-            prompt_ids = [
-                self._token_ids["soft_prompt_token_id"]
-            ] * self.processor.num_prompt_tokens
-            prompt_ids.extend(self._newline_ids)
-            prompt_ids.extend(history)
-            if sizes:
-                prompt_ids.extend(self._newline_ids)
-                for index, (view, size) in enumerate(sizes.items()):
-                    if index:
-                        prompt_ids.extend(self._newline_ids)
-                    prompt_ids.extend(
-                        self.processor.serialize_graph_ids(view, *size)
-                    )
-            prompt_ids.extend(self._newline_ids)
-            role = sample["role"]
-            if role not in self._role_ids:
-                self._role_ids[role] = tokenizer(
-                    f"\n{role}:", add_special_tokens=False
-                )["input_ids"]
-            prompt_ids.extend(self._role_ids[role])
+            prompt = self.processor.build_prompt(context, sizes)
+            prompt += f"\n{sample['role']}:"
+            prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
             response_ids = tokenizer(
                 sample["response"] + (tokenizer.eos_token or ""),
                 add_special_tokens=False,
