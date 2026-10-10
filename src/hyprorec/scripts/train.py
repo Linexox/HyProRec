@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, set_seed
+from transformers import set_seed
 from transformers.trainer_utils import get_last_checkpoint
 
 from ..config import parse_experiment_args
@@ -14,6 +14,7 @@ from ..data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
 from ..data.hypergraph import HypergraphTable
 from ..evaluation import build_compute_metrics
 from ..model_factory import build_model, load_modality_tables
+from ..modeling_hocrs import load_tokenizer
 from ..processing_hocrs import HoCRSProcessor
 from ..provenance import save_provenance
 from ..training import FourValidChecksCallback, HyProRecTrainer, validation_steps
@@ -64,7 +65,7 @@ def main() -> None:
     training_args.report_to = []
     set_seed(training_args.seed)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_args.backbone_name_or_path)
+    tokenizer = load_tokenizer(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(tokenizer, model_args.num_prompt_tokens)
     tables = load_modality_tables(data_args, model_args)
     model = build_model(model_args, data_args, processor, tables)

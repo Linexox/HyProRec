@@ -11,12 +11,19 @@ from typing import Mapping
 import torch
 from torch import nn
 import torch.nn.functional as F
-from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers.utils import ModelOutput
 
 from .configuration_hocrs import HoCRSConfig, canonical_feature_dims
+
+
+def load_tokenizer(name_or_path: str):
+    try:
+        return AutoTokenizer.from_pretrained(name_or_path)
+    except ValueError:
+        return AutoTokenizer.from_pretrained(name_or_path, trust_remote_code=True)
 
 
 def load_backbone(name_or_path: str) -> nn.Module:
@@ -717,4 +724,5 @@ __all__ = [
     "HoCRSRecommendationOutput",
     "hypergraph_propagate",
     "load_backbone",
+    "load_tokenizer",
 ]
