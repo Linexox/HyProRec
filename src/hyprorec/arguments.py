@@ -119,10 +119,11 @@ class HoCRSTrainingArguments(TrainingArguments):
     def __post_init__(self) -> None:
         if self.dp_replicate_size < 1 or self.dp_shard_size < 1:
             raise ValueError("Data-parallel mesh dimensions must be positive.")
+        self.parallelism_config = getattr(self, "parallelism_config", None)
         if self.dp_shard_size == 1 and self.dp_replicate_size != 1:
             raise ValueError("Use ordinary DDP for replication-only training.")
         if self.dp_shard_size > 1:
-            if self.parallelism_config is not None:
+            if getattr(self, "parallelism_config", None) is not None:
                 raise ValueError("Set mesh dimensions or parallelism_config, not both.")
             self.fsdp = True
             self.fsdp_config = self.fsdp_config or {
