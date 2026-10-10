@@ -6,6 +6,11 @@ qwen-omni environment as read-only system packages. It contains Torch
 `2.6.0+cu118`, Transformers `4.53.3`, Accelerate `1.14.0`, SwanLab `0.10.2`,
 and the data/evaluation dependencies used by the repository.
 
+The InteractiveOmni custom-code smoke additionally uses `decord`, `onnxruntime`,
+`timm`, `librosa`, `torchaudio 2.6.0+cu118`, and `diffusers 0.34.0`. These are
+installed only in this new project environment; existing LAB environments are
+unchanged.
+
 Launch commands should use:
 
 ```bash
