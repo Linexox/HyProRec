@@ -127,6 +127,8 @@ class HoCRSDataCollator:
         self.max_sequence_tokens = max_sequence_tokens
         tokenizer = processor.tokenizer
         self._history_cache: dict[str, str] = {}
+        self._prompt_cache: dict[tuple[str, tuple, str], list[int]] = {}
+        self._response_cache: dict[str, list[int]] = {}
         if not 0 < max_history_tokens <= 256:
             raise ValueError("max_history_tokens must be in (0, 256].")
         if max_sequence_tokens < 1:
@@ -163,13 +165,18 @@ class HoCRSDataCollator:
                 view: (graph.num_nodes, graph.num_hyperedges)
                 for view, graph in sample["hypergraphs"].items()
             }
-            prompt = self.processor.build_prompt(context, sizes)
-            prompt += f"\n{sample['role']}:"
-            prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-            response_ids = tokenizer(
-                sample["response"] + (tokenizer.eos_token or ""),
-                add_special_tokens=False,
-            )["input_ids"]
+            prompt_key = (context, tuple(sizes.items()), sample["role"])
+            prompt_ids = self._prompt_cache.get(prompt_key)
+            if prompt_ids is None:
+                prompt = self.processor.build_prompt(context, sizes)
+                prompt += f"\n{sample['role']}:"
+                prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+                self._prompt_cache[prompt_key] = prompt_ids
+            response = sample["response"] + (tokenizer.eos_token or "")
+            response_ids = self._response_cache.get(response)
+            if response_ids is None:
+                response_ids = tokenizer(response, add_special_tokens=False)["input_ids"]
+                self._response_cache[response] = response_ids
             prompts.append({"input_ids": prompt_ids + response_ids})
             prompt_lengths.append(len(prompt_ids))
         encoded = tokenizer.pad(prompts, padding=True, return_tensors="pt")

@@ -31,6 +31,8 @@ class SwanLabTracker:
 
     @classmethod
     def start(cls, model_args, data_args, training_args, config_path: Path):
+        if os.environ.get("RANK", "0") != "0":
+            return cls()
         mode = os.getenv("SWANLAB_MODE", "online")
         if mode == "disabled":
             return cls()

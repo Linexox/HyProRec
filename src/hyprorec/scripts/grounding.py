@@ -84,6 +84,45 @@ def _load_feature_tables(data_args: DataArguments) -> dict[str, torch.Tensor]:
     }
 
 
+def _finalize_grounding(
+    is_main_process,
+    output_dir,
+    config,
+    combined_state,
+    selections,
+    config_path,
+    model_args,
+    data_args,
+    training_args,
+):
+    if not is_main_process:
+        return
+    model = HoCRSGroundingModel(config)
+    model.load_state_dict(combined_state, strict=True)
+    model.save_pretrained(output_dir)
+    output_path = Path(output_dir)
+    (output_path / "best_modalities.json").write_text(
+        json.dumps(selections, indent=2), encoding="utf-8"
+    )
+    output_path.mkdir(parents=True, exist_ok=True)
+    (output_path / f"grounding_recipe{config_path.suffix}").write_text(
+        config_path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (output_path / "resolved_grounding_config.json").write_text(
+        json.dumps(
+            {
+                "model": asdict(model_args),
+                "data": asdict(data_args),
+                "training": training_args.to_dict(),
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     load_dotenv()
     model_args, data_args, training_args, config_path = parse_experiment_args()
@@ -113,6 +152,7 @@ def main() -> None:
     table = HypergraphTable.from_json(table_path)
     combined_state = {}
     selections = {}
+    is_main_process = False
     for view in views:
         set_seed(training_args.seed)
         view_config = copy.deepcopy(config)
@@ -185,36 +225,17 @@ def main() -> None:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    if is_main_process:
-        model = HoCRSGroundingModel(config)
-        model.load_state_dict(combined_state, strict=True)
-        model.save_pretrained(training_args.output_dir)
-        (Path(training_args.output_dir) / "best_modalities.json").write_text(
-            json.dumps(selections, indent=2), encoding="utf-8"
-        )
-        training_args.label_names = []
-        training_args.prediction_loss_only = True
-
-    if is_main_process:
-        output_dir = Path(training_args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / f"grounding_recipe{config_path.suffix}").write_text(
-            config_path.read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
-        (output_dir / "resolved_grounding_config.json").write_text(
-            json.dumps(
-                {
-                    "model": asdict(model_args),
-                    "data": asdict(data_args),
-                    "training": training_args.to_dict(),
-                },
-                ensure_ascii=False,
-                indent=2,
-                default=str,
-            ),
-            encoding="utf-8",
-        )
+    _finalize_grounding(
+        is_main_process,
+        training_args.output_dir,
+        config,
+        combined_state,
+        selections,
+        config_path,
+        model_args,
+        data_args,
+        training_args,
+    )
     tracker.finish()
 
 
