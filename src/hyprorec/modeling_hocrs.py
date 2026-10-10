@@ -41,7 +41,13 @@ def load_backbone(name_or_path: str) -> nn.Module:
                 name_or_path, torch_dtype="auto"
             )
         )
-    return _ensure_lm_head_accessors(AutoModelForCausalLM.from_pretrained(name_or_path))
+    if config.model_type in {"llava", "qwen2_5_vl"} or "omni" in config.model_type:
+        from transformers import AutoModelForImageTextToText
+
+        model = AutoModelForImageTextToText.from_pretrained(name_or_path)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(name_or_path)
+    return _ensure_lm_head_accessors(model)
 
 
 def _ensure_lm_head_accessors(model: nn.Module) -> nn.Module:
@@ -71,7 +77,13 @@ def _backbone_from_config(config) -> nn.Module:
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
         return _ensure_lm_head_accessors(Qwen2_5OmniThinkerForConditionalGeneration(config))
-    return _ensure_lm_head_accessors(AutoModelForCausalLM.from_config(config))
+    if config.model_type in {"llava", "qwen2_5_vl"} or "omni" in config.model_type:
+        from transformers import AutoModelForImageTextToText
+
+        model = AutoModelForImageTextToText.from_config(config)
+    else:
+        model = AutoModelForCausalLM.from_config(config)
+    return _ensure_lm_head_accessors(model)
 
 
 def _hidden_size(config) -> int:
