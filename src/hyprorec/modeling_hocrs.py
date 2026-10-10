@@ -586,11 +586,11 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         return embeds
 
     def _decoder_model(self) -> nn.Module:
-        for name in ("model", "transformer", "language_model"):
+        for name in ("model", "transformer", "language_model", "llm"):
             decoder = getattr(self.backbone, name, None)
             if isinstance(decoder, nn.Module):
                 return decoder
-        raise AttributeError("backbone does not expose a decoder module")
+        return self.backbone
 
     def encode(self, input_ids, attention_mask=None, hypergraphs=None, **kwargs):
         kwargs.pop("return_dict", None)
