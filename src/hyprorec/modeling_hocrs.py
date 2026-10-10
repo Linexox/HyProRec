@@ -593,6 +593,10 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         for name in ("model", "transformer", "language_model", "llm"):
             decoder = getattr(self.backbone, name, None)
             if isinstance(decoder, nn.Module):
+                for nested_name in ("model", "transformer"):
+                    nested = getattr(decoder, nested_name, None)
+                    if isinstance(nested, nn.Module):
+                        return nested
                 return decoder
         return self.backbone
 
