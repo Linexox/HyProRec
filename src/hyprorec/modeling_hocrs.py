@@ -24,32 +24,44 @@ def load_backbone(name_or_path: str) -> nn.Module:
     if config.model_type == "qwen2_5_omni" and "Qwen2_5OmniModel" in (
         getattr(config, "architectures", None) or ()
     ):
-        from transformers import Qwen2_5OmniForConditionalGeneration
+        from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
-        full_model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
-            name_or_path, torch_dtype="auto"
+        thinker = Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
+            name_or_path,
+            torch_dtype="auto",
+            low_cpu_mem_usage=True,
         )
-        # The published checkpoint is a composite Omni model.  CRS consumes
-        # only the text-generation thinker; returning the submodule avoids
-        # routing audio output through an unused talker during training.
-        return _ensure_lm_head_accessors(full_model.thinker)
+        # The published checkpoint is a composite Omni model.  Loading the
+        # thinker directly skips the unused talker and its optimizer memory.
+        return _ensure_lm_head_accessors(thinker)
     if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
         return _ensure_lm_head_accessors(
             Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
-                name_or_path, torch_dtype="auto"
+                name_or_path,
+                torch_dtype="auto",
+                low_cpu_mem_usage=True,
             )
         )
     is_multimodal = config.model_type in {"llava", "qwen2_5_vl"} or (
         "omni" in config.model_type
     )
+    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
     if is_multimodal:
         from transformers import AutoModelForImageTextToText
 
-        model = AutoModelForImageTextToText.from_pretrained(name_or_path)
+        model = AutoModelForImageTextToText.from_pretrained(
+            name_or_path,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+        )
     else:
-        model = AutoModelForCausalLM.from_pretrained(name_or_path)
+        model = AutoModelForCausalLM.from_pretrained(
+            name_or_path,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+        )
     return _ensure_lm_head_accessors(model)
 
 
