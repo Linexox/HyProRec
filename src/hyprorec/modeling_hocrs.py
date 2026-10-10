@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import types
 from typing import Mapping
 
 import torch
@@ -31,14 +32,34 @@ def load_backbone(name_or_path: str) -> nn.Module:
         # The published checkpoint is a composite Omni model.  CRS consumes
         # only the text-generation thinker; returning the submodule avoids
         # routing audio output through an unused talker during training.
-        return full_model.thinker
+        return _ensure_lm_head_accessors(full_model.thinker)
     if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
-        return Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
-            name_or_path, torch_dtype="auto"
+        return _ensure_lm_head_accessors(
+            Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
+                name_or_path, torch_dtype="auto"
+            )
         )
-    return AutoModelForCausalLM.from_pretrained(name_or_path)
+    return _ensure_lm_head_accessors(AutoModelForCausalLM.from_pretrained(name_or_path))
+
+
+def _ensure_lm_head_accessors(model: nn.Module) -> nn.Module:
+    """Expose Qwen Omni's ``lm_head`` through the standard HF API.
+
+    Older Transformers releases do not implement ``get_output_embeddings`` on
+    the Omni thinker.  Without this accessor, resizing tokenizer embeddings
+    leaves the LM head at the old vocabulary size and makes the loss reshape
+    invalid.
+    """
+    if model.get_output_embeddings() is None and hasattr(model, "lm_head"):
+        model.get_output_embeddings = types.MethodType(
+            lambda self: self.lm_head, model
+        )
+        model.set_output_embeddings = types.MethodType(
+            lambda self, value: setattr(self, "lm_head", value), model
+        )
+    return model
 
 
 def _backbone_from_config(config) -> nn.Module:
@@ -49,8 +70,8 @@ def _backbone_from_config(config) -> nn.Module:
     if config.model_type == "qwen2_5_omni_thinker":
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
-        return Qwen2_5OmniThinkerForConditionalGeneration(config)
-    return AutoModelForCausalLM.from_config(config)
+        return _ensure_lm_head_accessors(Qwen2_5OmniThinkerForConditionalGeneration(config))
+    return _ensure_lm_head_accessors(AutoModelForCausalLM.from_config(config))
 
 
 def _hidden_size(config) -> int:
