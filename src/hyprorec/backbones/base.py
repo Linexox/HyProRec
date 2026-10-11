@@ -256,8 +256,16 @@ class InteractiveOmniAdapter(BackboneAdapter):
 
     @classmethod
     def load_model(cls, name_or_path: str) -> nn.Module:
+        config = AutoConfig.from_pretrained(
+            name_or_path,
+            trust_remote_code=True,
+        )
+        llm_config = getattr(config, "llm_config", None)
+        if llm_config is not None:
+            llm_config._attn_implementation = "eager"
         return AutoModelForCausalLM.from_pretrained(
             name_or_path,
+            config=config,
             torch_dtype="auto",
             low_cpu_mem_usage=True,
             trust_remote_code=True,
