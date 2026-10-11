@@ -2,11 +2,39 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import math
 
 import torch
 from transformers import Trainer
 from transformers.trainer_callback import TrainerCallback
+
+
+def canonical_stage_logs(stage, logs):
+    prefix = f"{stage}_"
+    return {
+        key.removeprefix(prefix): value
+        for key, value in logs.items()
+    }
+
+
+class StageAwareTrainerMixin:
+    def __init__(self, *args, **kwargs):
+        self._metric_stage = "train"
+        super().__init__(*args, **kwargs)
+
+    @contextmanager
+    def metric_stage(self, stage):
+        previous = self._metric_stage
+        self._metric_stage = stage
+        try:
+            yield
+        finally:
+            self._metric_stage = previous
+
+    def evaluate(self, *args, **kwargs):
+        with self.metric_stage("eval"):
+            return super().evaluate(*args, **kwargs)
 
 
 def validation_steps(updates_per_epoch: int, total_steps: int) -> tuple[int, ...]:
@@ -49,7 +77,7 @@ def _as_float(value):
     return float(value)
 
 
-class HyProRecTrainer(Trainer):
+class HyProRecTrainer(StageAwareTrainerMixin, Trainer):
     """Add model diagnostics and unified recommendation/dialogue predictions."""
 
     def __init__(self, *args, attention_token_ids=None, swanlab_tracker=None, **kwargs):
@@ -59,19 +87,18 @@ class HyProRecTrainer(Trainer):
         self._diagnostic_sum = {}
         self._diagnostic_count = {}
 
-    def _record(self, key, value, prefix=""):
+    def _record(self, key, value):
         value = _as_float(value)
         if value is None or not math.isfinite(value):
             return
-        name = f"{prefix}{key}" if prefix else key
-        self._diagnostic_sum[name] = self._diagnostic_sum.get(name, 0.0) + value
-        self._diagnostic_count[name] = self._diagnostic_count.get(name, 0) + 1
+        self._diagnostic_sum[key] = self._diagnostic_sum.get(key, 0.0) + value
+        self._diagnostic_count[key] = self._diagnostic_count.get(key, 0) + 1
 
     @staticmethod
     def _unwrapped(model):
         return getattr(model, "module", model)
 
-    def _attention_diagnostics(self, inputs, attention_weights, prefix):
+    def _attention_diagnostics(self, inputs, attention_weights):
         input_ids = inputs.get("input_ids")
         pooling_mask = inputs.get("pooling_mask")
         if input_ids is None or pooling_mask is None or not attention_weights:
@@ -121,30 +148,22 @@ class HyProRecTrainer(Trainer):
             self._record(
                 f"attention/{view}/soft_prompt_mass",
                 (weights * soft_mask.float()).sum(dim=-1).mean(),
-                prefix,
             )
             self._record(
                 f"attention/{view}/context_mass",
                 (weights * context_mask.float()).sum(dim=-1).mean(),
-                prefix,
             )
             self._record(
                 f"attention/{view}/hypergraph_mass",
                 (weights * all_graph.float()).sum(dim=-1).mean(),
-                prefix,
             )
             for source_view, source_mask in source_masks.items():
                 self._record(
                     f"attention/{view}/{source_view}_hypergraph_mass",
                     (weights * source_mask.float()).sum(dim=-1).mean(),
-                    prefix,
                 )
 
     def _collect_diagnostics(self, outputs, inputs, model):
-        # ``eval_*`` is rewritten by Transformers' W&B callback.  The
-        # underscore prefix keeps diagnostics under ``eval/`` instead of
-        # ``train/eval/...``.
-        prefix = "" if model.training else "eval_"
         for name in (
             "loss",
             "fusion_loss",
@@ -152,7 +171,7 @@ class HyProRecTrainer(Trainer):
             "conversation_loss",
         ):
             field = "total" if name == "loss" else name.removesuffix("_loss")
-            self._record(f"loss/{field}", getattr(outputs, name, None), prefix)
+            self._record(f"loss/{field}", getattr(outputs, name, None))
 
         collect_auxiliary = (
             not model.training
@@ -164,11 +183,11 @@ class HyProRecTrainer(Trainer):
             means = route.mean(dim=0)
             head = self._unwrapped(model).recommendation_head
             for view, value in zip(head.names, means):
-                self._record(f"rec_router/mean_{view}", value, prefix)
+                self._record(f"rec_router/mean_{view}", value)
 
         if collect_auxiliary:
             self._attention_diagnostics(
-                inputs, getattr(outputs, "attention_weights", None), prefix
+                inputs, getattr(outputs, "attention_weights", None)
             )
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
@@ -193,7 +212,13 @@ class HyProRecTrainer(Trainer):
         labels = (inputs["labels"].detach(), inputs["rec_labels"].detach())
         return loss, (recommendations.detach(), conversation_predictions.detach()), labels
 
-    def log(self, logs, *args, **kwargs):
+    def predict(self, *args, **kwargs):
+        with self.metric_stage("test"):
+            output = super().predict(*args, **kwargs)
+            self.log(output.metrics, stage="test")
+        return output
+
+    def log(self, logs, *args, stage=None, **kwargs):
         logs = dict(logs)
         if "learning_rate" in logs:
             logs["optimization/learning_rate"] = logs["learning_rate"]
@@ -204,8 +229,18 @@ class HyProRecTrainer(Trainer):
         self._diagnostic_sum.clear()
         self._diagnostic_count.clear()
         if self.swanlab_tracker is not None and self.is_world_process_zero():
-            self.swanlab_tracker.log_trainer(logs)
+            metric_stage = stage or self._metric_stage
+            self.swanlab_tracker.log_trainer(
+                metric_stage,
+                canonical_stage_logs(metric_stage, logs),
+            )
         return super().log(logs, *args, **kwargs)
 
 
-__all__ = ["FourValidChecksCallback", "HyProRecTrainer", "validation_steps"]
+__all__ = [
+    "FourValidChecksCallback",
+    "HyProRecTrainer",
+    "StageAwareTrainerMixin",
+    "canonical_stage_logs",
+    "validation_steps",
+]

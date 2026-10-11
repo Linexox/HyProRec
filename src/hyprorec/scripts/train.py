@@ -141,17 +141,16 @@ def main() -> None:
         trainer.save_metrics("train", result.metrics)
 
     if eval_dataset is not None:
-        valid_metrics = trainer.evaluate(
+        eval_metrics = trainer.evaluate(
             eval_dataset=eval_dataset, metric_key_prefix="eval"
         )
-        trainer.save_metrics("valid", valid_metrics)
+        trainer.save_metrics("eval", eval_metrics)
 
     if test_dataset is not None:
-        test_metrics = trainer.predict(
+        test_output = trainer.predict(
             test_dataset, metric_key_prefix="test"
-        ).metrics
-        trainer.log(test_metrics)
-        trainer.save_metrics("test", test_metrics)
+        )
+        trainer.save_metrics("test", test_output.metrics)
     tracker.finish()
 
 

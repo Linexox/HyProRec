@@ -97,21 +97,14 @@ class SwanLabTracker:
         if values:
             swanlab.log(values)
 
-    def log_trainer(self, logs: dict[str, Any]) -> None:
-        """Map Transformers' log names to the stable HyProRec panels."""
+    def log_trainer(self, stage: str, logs: dict[str, Any]) -> None:
         if self.run is None:
             return
-        stage = "train"
-        if any(key.startswith("test_") for key in logs):
-            stage = "test"
-        elif any(key.startswith("eval_") for key in logs):
-            stage = "valid"
         main: dict[str, Any] = {}
         other: dict[str, Any] = {}
         for key, value in logs.items():
-            clean = key.removeprefix("eval_").removeprefix("test_")
-            if clean.startswith("attention/"):
-                _, view, metric = clean.split("/", 2)
+            if key.startswith("attention/"):
+                _, view, metric = key.split("/", 2)
                 allowed = {
                     "soft_prompt_mass": f"{view}-soft-pro-mass",
                     "context_mass": f"{view}-context-mass",
@@ -123,10 +116,10 @@ class SwanLabTracker:
                     other[
                         f"other_{stage}/AttnPooling/{view}-{source}-hyg-mass"
                     ] = value
-            elif clean.startswith("rec_router/mean_"):
-                view = clean.removeprefix("rec_router/mean_")
+            elif key.startswith("rec_router/mean_"):
+                view = key.removeprefix("rec_router/mean_")
                 other[f"other_{stage}/RecRouter/{view}"] = value
-            elif clean.startswith(
+            elif key.startswith(
                 (
                     "loss/",
                     "recall@",
@@ -137,11 +130,10 @@ class SwanLabTracker:
                     "response_tokens",
                 )
             ):
-                main[f"{stage}/{clean}"] = value
+                main[f"{stage}/{key}"] = value
         self.log({**main, **other})
 
-    def log_grounding(self, logs: dict[str, Any]) -> None:
-        stage = "valid" if any(key.startswith("eval_") for key in logs) else "train"
+    def log_grounding(self, stage: str, logs: dict[str, Any]) -> None:
         values = {}
         names = {
             "loss": "total",
@@ -150,9 +142,8 @@ class SwanLabTracker:
             "sa_sn_loss": "sa-sn",
         }
         for key, value in logs.items():
-            clean = key.removeprefix("eval_")
-            if clean in names:
-                values[f"{stage}/grounding/{names[clean]}"] = value
+            if key in names:
+                values[f"{stage}/grounding/{names[key]}"] = value
         self.log(values)
 
     def finish(self, state: str = "success", error: str | None = None) -> None:

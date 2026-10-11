@@ -8,7 +8,11 @@ import torch
 from hyprorec.data.redial import HoCRSDataCollator
 from hyprorec.scripts.grounding import _finalize_grounding
 from hyprorec.tracking import SwanLabTracker
-from hyprorec.training import HyProRecTrainer
+from hyprorec.training import (
+    HyProRecTrainer,
+    StageAwareTrainerMixin,
+    canonical_stage_logs,
+)
 
 
 class _FakeTokenizer:
@@ -141,6 +145,67 @@ class SwanLabProcessTest(unittest.TestCase):
         init.assert_not_called()
 
 
+class SwanLabStageTest(unittest.TestCase):
+    def test_tracker_receives_explicit_eval_stage_without_prefix_adaptation(self):
+        tracker = SwanLabTracker(run=object())
+        recorded = []
+        tracker.log = lambda metrics: recorded.append(metrics)
+
+        tracker.log_trainer(
+            "eval",
+            {
+                "loss/total": 1.0,
+                "attention/txt/context_mass": 0.25,
+                "rec_router/mean_txt": 0.5,
+            },
+        )
+        tracker.log_grounding(
+            "eval",
+            {
+                "loss": 2.0,
+                "ga_sa_loss": 0.75,
+            },
+        )
+
+        self.assertEqual(
+            recorded[0],
+            {
+                "eval/loss/total": 1.0,
+                "other_eval/AttnPooling/txt-context-mass": 0.25,
+                "other_eval/RecRouter/txt": 0.5,
+            },
+        )
+        self.assertEqual(
+            recorded[1],
+            {
+                "eval/grounding/total": 2.0,
+                "eval/grounding/ga-sa": 0.75,
+            },
+        )
+
+    def test_trainer_stage_is_explicit_at_evaluation_boundary(self):
+        class BaseTrainer:
+            def __init__(self):
+                self.stages = []
+
+            def evaluate(self):
+                self.stages.append(self._metric_stage)
+                return {}
+
+        class TestTrainer(StageAwareTrainerMixin, BaseTrainer):
+            pass
+
+        trainer = TestTrainer()
+        trainer.evaluate()
+
+        self.assertEqual(trainer.stages, ["eval"])
+        self.assertEqual(trainer._metric_stage, "train")
+        self.assertEqual(
+            canonical_stage_logs("eval", {"eval_loss": 1.0, "loss/total": 2.0}),
+            {"loss": 1.0, "loss/total": 2.0},
+        )
+
+
 class GroundingProcessTest(unittest.TestCase):
     def test_nonzero_rank_skips_combined_checkpoint_finalization(self):
         self.assertIsNone(
@@ -176,7 +241,6 @@ class DiagnosticCostTest(unittest.TestCase):
                 "pooling_mask": torch.ones(1, 6, dtype=torch.bool),
             },
             {"txt": torch.full((1, 6), 1 / 6)},
-            "",
         )
 
         self.assertIn("attention/txt/soft_prompt_mass", recorded)

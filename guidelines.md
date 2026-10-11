@@ -214,7 +214,7 @@ $$
 # 代码修改任务
 
 我们或许不再进行模型架构旁支的探索了，所以重构代码需要将旁支的逻辑、死代码清理一下
-对于WANDB（需要更改为SWANLAB） 指标记录CRS任务指标，主指标（推荐对话指标各项损失）都记在train/,valid/,test/这几个Panel Section中，其他的辅助指标，只只记录rec_router以及Attention Pooling中的部分关键指标就好了，放在other_train/ other_valid/ other_test Panel Section中，具体other中只记
+对于WANDB（需要更改为SWANLAB） 指标记录CRS任务指标，主指标（推荐对话指标各项损失）都记在train/,eval/,test/这几个Panel Section中，其他的辅助指标，只只记录rec_router以及Attention Pooling中的部分关键指标就好了，放在other_train/ other_eval/ other_test Panel Section中，具体other中只记
 - other_*/AttnPooling/
   - {v}-soft_pro-mass （对于模态v的注意力池化的软提示词的注意力总和）
   - {v}-context-mass (对于模态v的注意力池化的上下文历史的注意力总和)
@@ -224,7 +224,7 @@ $$
   - ...（其他模态的同理，我就省略了）
 
 train和val中，记录细分的三项loss，总loss,推荐@1,10,50、对话指标@1,2,3,4即可。
-每一个epoch产生4次（包括epoch结束）valid 评测（可以采用step的评测策略，貌似transformers有预留接口）。只保存最后的和最好的（总valid loss最小）的checkpoints。训练结束后，加载最好的和模型再进行一次valid评估和test评估（对于对话指标都采用teacher forcing）
+每一个epoch产生4次（包括epoch结束）eval 评测（可以采用step的评测策略，貌似transformers有预留接口）。只保存最后的和最好的（总eval loss最小）的checkpoints。训练结束后，加载最好的模型再进行一次eval评估和test评估（对于对话指标都采用teacher forcing）
 
 对于Grounding任务，每一个epoch最后评测，只需要记录总loss和三项loss的值即可;
 
@@ -283,7 +283,7 @@ CRS 默认冻结离线特征、grounding 超图塔和 backbone，只训练 soft 
 
 训练代码从 `.env` 读取 `SWANLAB_API_KEY`，可选读取 `SWANLAB_API_HOST`，不得把凭证写入代码、配置或提交。SwanLab 项目名为 `HyProRec`。
 
-run 名使用 `only-*` 或 `full` 表示模态组合；tags 必须包含数据集、backbone、模态组合、$\lambda$、$\eta$ 和 seed。主指标写入 `train/`、`valid/`、`test/`，包括总 loss、各项 loss、Recall/MRR/NDCG@1/10/50、BLEU/DIST@1/2/3/4。辅助指标只写入 `other_train/`、`other_valid/`、`other_test/`：
+run 名使用 `only-*` 或 `full` 表示模态组合；tags 必须包含数据集、backbone、模态组合、$\lambda$、$\eta$ 和 seed。主指标写入 `train/`、`eval/`、`test/`，包括总 loss、各项 loss、Recall/MRR/NDCG@1/10/50、BLEU/DIST@1/2/3/4。辅助指标只写入 `other_train/`、`other_eval/`、`other_test/`：
 
 ```text
 AttnPooling/{view}-soft-prompt-mass
@@ -292,11 +292,11 @@ AttnPooling/{view}-{source_view}-hypergraph-mass
 RecRouter/{view}
 ```
 
-每个 CRS epoch 进行四次 valid，验证点为该 epoch optimizer update 数的四等分位置，并包含 epoch 结束点。只保留 last checkpoint 和 valid 总 loss 最小的 best checkpoint。训练结束后加载 best checkpoint，重新执行一次 valid 和 test；对话指标使用 teacher forcing。Grounding 每个 epoch 结束时验证一次。
+每个 CRS epoch 进行四次 eval，验证点为该 epoch optimizer update 数的四等分位置，并包含 epoch 结束点。只保留 last checkpoint 和 eval 总 loss 最小的 best checkpoint。训练结束后加载 best checkpoint，重新执行一次 eval 和 test；对话指标使用 teacher forcing。Grounding 每个 epoch 结束时验证一次。
 
 ## 3. 训练和推理速度研究
 
-重构前后使用相同硬件、数据、seed、batch、序列长度和模态配置记录 step time、tokens/s、data wait、GPU 利用率、峰值显存、valid/test 时间及任务指标。每项优化必须有局部 benchmark 和端到端回归结果。
+重构前后使用相同硬件、数据、seed、batch、序列长度和模态配置记录 step time、tokens/s、data wait、GPU 利用率、峰值显存、eval/test 时间及任务指标。每项优化必须有局部 benchmark 和端到端回归结果。
 
 优先检查以下路径：
 
@@ -320,7 +320,7 @@ RecRouter/{view}
 
 LAB 上优先复用 `$HF_HOME` 已有模型缓存，不重复下载权重。五个 backbone 均需执行 config、tokenizer、单 batch forward 和单步 generation smoke；同时验证 hidden size、logits shape、graph token 注入和 checkpoint 恢复。数据集通过 `/data2/lhf/.DATA` 或现有数据目录软链提供，所有新增文件写入 `/data2/lhf`。
 
-重构完成的验收顺序为：单元测试、grounding 单 batch、CRS 单 batch、五个 backbone smoke、固定小数据集回归、完整 valid/test、速度对比和 LAB 远程运行检查。
+重构完成的验收顺序为：单元测试、grounding 单 batch、CRS 单 batch、五个 backbone smoke、固定小数据集回归、完整 eval/test、速度对比和 LAB 远程运行检查。
 
 
 
@@ -333,9 +333,9 @@ LAB 上优先复用 `$HF_HOME` 已有模型缓存，不重复下载权重。五�
 3. **R2 Grounding**：删除共现图入口和遗留合并脚本；逐模态训练、验证并保存最佳塔；checkpoint 必须能被 CRS 逐塔恢复，验证日志只包含四项 grounding loss。
 4. **R3 Backbone adapter**：先实现统一 tokenizer、embedding、decoder hidden、LM logits 和 generation-cache 接口，再逐个接入五类 backbone；每个 adapter 先通过 config/tokenizer/forward/generation 四级 smoke，再允许进入训练脚本。
 5. **R4 CRS 主路径**：固定 grounding 与 backbone，按四模态超图 token → MoE → backbone → AttnPooling → 全目录评分 → router/LM 的顺序重构；训练路径不保留 BPR、balance、co 或旧推荐头的参数、分支和日志。
-6. **R5 训练与记录**：支持普通 DDP 和 HSDP；以 optimizer update 为单位切分每 epoch 的四次 valid；只保留 best/last；训练后重新跑 best-valid 与 test；SwanLab 的主指标和辅助指标严格按本文件 panel 命名。
+6. **R5 训练与记录**：支持普通 DDP 和 HSDP；以 optimizer update 为单位切分每 epoch 的四次 eval；只保留 best/last；训练后重新跑 best-eval 与 test；SwanLab 的主指标和辅助指标严格按本文件 panel 命名。
 7. **R6 性能实验**：为 tokenization、局部超图、MoE、hidden-state、checkpoint、diagnostics、generation cache 和全目录投影分别记录局部 benchmark；再做固定小数据端到端对比，只有指标、显存和 generation latency 均满足约束时才保留优化。
-8. **R7 验收与部署**：依次执行本地单测/compile、grounding 单 batch、CRS 单 batch、backbone smoke、固定回归、完整 valid/test 和速度报告；将通过验证的 commit 用 bundle 同步到 LAB worktree，并记录软链、模型路径和运行命令。
+8. **R7 验收与部署**：依次执行本地单测/compile、grounding 单 batch、CRS 单 batch、backbone smoke、固定回归、完整 eval/test 和速度报告；将通过验证的 commit 用 bundle 同步到 LAB worktree，并记录软链、模型路径和运行命令。
 
 当前已验证的性能实现是：`HoCRSBaseModel.encode` 直接调用 backbone decoder，默认只保留最后 hidden state；有 labels 时只对 shifted 后的有效回复位置投影词表并计算 causal loss，评估阶段返回这些位置的 teacher-forced argmax，训练态不保留词表 logits；无 labels 的 generation 仍返回完整 LM logits 并复用 past key values。该实现必须继续通过数值等价和 cache generation 回归，不能仅凭单项 micro-benchmark 宣称达到总体加速目标。
 

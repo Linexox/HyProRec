@@ -24,9 +24,10 @@ from ..data.grounding import (
 from ..data.hypergraph import HypergraphTable
 from ..modeling_grounding import HoCRSGroundingModel, build_source_config
 from ..tracking import SwanLabTracker
+from ..training import StageAwareTrainerMixin, canonical_stage_logs
 
 
-class GroundingTrainer(Trainer):
+class GroundingTrainer(StageAwareTrainerMixin, Trainer):
     def __init__(self, *args, swanlab_tracker=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.swanlab_tracker = swanlab_tracker
@@ -53,7 +54,11 @@ class GroundingTrainer(Trainer):
             self._grounding_sum.clear()
             self._grounding_count = 0
         if self.swanlab_tracker is not None and self.is_world_process_zero():
-            self.swanlab_tracker.log_grounding(logs)
+            stage = self._metric_stage
+            self.swanlab_tracker.log_grounding(
+                stage,
+                canonical_stage_logs(stage, logs),
+            )
         return super().log(logs, *args, **kwargs)
 
     def create_optimizer(self):
