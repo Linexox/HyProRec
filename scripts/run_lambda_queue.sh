@@ -11,13 +11,13 @@ export SWANLAB_PROJECT="${SWANLAB_PROJECT:-HyProRec}"
 export TMPDIR="${TMPDIR:-/data2/lhf/tmp/hyprorec-lambda}"
 
 configs=(
-  full-item-full-attn-lambda-0p1
-  full-item-full-attn-lambda-0p3
-  full-item-full-attn-lambda-1p0
-  full-item-full-attn-lambda-3p0
+  full-lambda-0p1
+  full-lambda-0p3
+  full-lambda-1p0
+  full-lambda-3p0
 )
 for config in "${configs[@]}"; do
-  output="outputs/redial/hocrs/semantic-item-n64-h256/${config#full-item-}"
+  output="outputs/redial/hocrs/$config"
   if [[ -e "$output" ]]; then
     echo "Refusing to resume or overwrite existing output: $output"
     exit 1
@@ -27,7 +27,6 @@ done
 mkdir -p logs/lambda
 mkdir -p "$TMPDIR"
 for config in "${configs[@]}"; do
-  lambda="${config##*-lambda-}"
   echo "START $(date -Is) $config"
   "$PYTHON_BIN" -m torch.distributed.run --standalone --nproc-per-node="${NPROC_PER_NODE:-8}" \
     -m hyprorec.scripts.train \

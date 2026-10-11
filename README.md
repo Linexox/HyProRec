@@ -36,7 +36,7 @@ python -m hyprorec.scripts.grounding \
   --config configs/redial/hocrs/grounding.yaml
 torchrun --standalone --nproc-per-node=8 \
   -m hyprorec.scripts.train \
-  --config configs/redial/hocrs/full-item-full-attn.yaml
+  --config configs/redial/hocrs/full.yaml
 ```
 
 Grounding trains four independent graph towers, one per semantic modality. The

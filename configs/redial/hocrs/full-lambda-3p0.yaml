@@ -12,12 +12,12 @@ model:
   recommendation_attention_dim: 256
   recommendation_temperature: 0.07
   recommendation_view_loss_weight: 0.2
-  conversation_loss_weight: 1.0
+  conversation_loss_weight: 3.0
 data:
   dataset_path: data/hyprorec-redial
   hyperedge_table_path: data/hyprorec-redial/hyperedge_table.json
   embeddings_dir_name: embeddings
-  views: [txt, img, vdo, ado]
+  views: [txt, img, ado, vdo]
   topk: 3
   khop: 2
   hyperedge_sampling: strict
@@ -26,7 +26,7 @@ data:
   max_history_tokens: 256
   max_sequence_tokens: 1024
 training:
-  output_dir: outputs/redial/hocrs/semantic-item-n64-h256/full-attn
+  output_dir: outputs/redial/hocrs/full-lambda-3p0
   do_train: true
   do_eval: true
   do_predict: true
@@ -53,6 +53,6 @@ training:
   logging_strategy: steps
   logging_steps: 20
   report_to: []
-  run_name: full-attn
+  run_name: full-lambda-3p0
   seed: 42
   data_seed: 42

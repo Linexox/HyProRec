@@ -1,6 +1,5 @@
 model:
   grounding_tokenizer_name_or_path: /data2/lhf/.MODEL/all-mpnet-base-v2
-  backbone_name_or_path: /data2/lhf/.MODEL/Qwen2.5-Omni-3B
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3

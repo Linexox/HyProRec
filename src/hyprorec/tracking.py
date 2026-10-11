@@ -7,6 +7,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from .constants import MODALITIES
+
 
 def _flatten(values: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     result: dict[str, Any] = {}
@@ -48,7 +50,7 @@ class SwanLabTracker:
         views = "-".join(data_args.views)
         composition = (
             "full"
-            if tuple(data_args.views) == ("txt", "img", "ado", "vdo")
+            if set(data_args.views) == set(MODALITIES)
             else f"only-{views}"
         )
         requested_name = training_args.run_name

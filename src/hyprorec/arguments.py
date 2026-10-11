@@ -13,7 +13,7 @@ from .constants import MODALITIES
 
 @dataclass
 class ModelArguments:
-    backbone_name_or_path: str = "microsoft/DialoGPT-small"
+    backbone_name_or_path: str = "Qwen/Qwen2.5-Omni-3B"
     recommendation_head: str = "item_table"
     freeze_backbone: bool = True
     num_prompt_tokens: int = 20
@@ -58,7 +58,7 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
-    dataset_path: str = "data/hocrs2_redial"
+    dataset_path: str = "data/hyprorec-redial"
     hyperedge_table_path: str | None = None
     embeddings_dir_name: str = "embeddings"
     views: list[str] = field(default_factory=lambda: list(ALL_GRAPH_VIEWS))

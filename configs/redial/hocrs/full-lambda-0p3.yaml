@@ -17,7 +17,7 @@ data:
   dataset_path: data/hyprorec-redial
   hyperedge_table_path: data/hyprorec-redial/hyperedge_table.json
   embeddings_dir_name: embeddings
-  views: [txt, img, vdo, ado]
+  views: [txt, img, ado, vdo]
   topk: 3
   khop: 2
   hyperedge_sampling: strict
@@ -26,7 +26,7 @@ data:
   max_history_tokens: 256
   max_sequence_tokens: 1024
 training:
-  output_dir: outputs/redial/hocrs/semantic-item-n64-h256/full-attn-lambda-0p3
+  output_dir: outputs/redial/hocrs/full-lambda-0p3
   do_train: true
   do_eval: true
   do_predict: true
@@ -53,6 +53,6 @@ training:
   logging_strategy: steps
   logging_steps: 20
   report_to: []
-  run_name: full-attn-lambda-0p3
+  run_name: full-lambda-0p3
   seed: 42
   data_seed: 42
