@@ -23,3 +23,12 @@ labels are valid, and reconstructs the teacher-forced argmax tensor with `-100`
 elsewhere. GPT-2 reference tests and a Qwen2.5-Omni-3B GPU smoke matched the dense
 loss and argmax results exactly. This is a correctness check; an end-to-end speed
 claim still requires the fixed-data comparison above.
+
+The data path also caches decoded histories, prompt tokenization, response
+tokenization, and strict local hypergraphs. `GraphTokenMoE` evaluates its expert
+weights with batched matrix multiplications. Trainer diagnostics now compute only
+the SwanLab-required attention masses and per-view router means; entropy, top-k,
+maximum-weight, top-1, and standard-deviation summaries are not materialized.
+These changes reduce repeated Python work and logging overhead while preserving
+the tensors used by the recommendation and dialogue losses. They still require
+the fixed-data end-to-end benchmark before accepting the 30% throughput target.

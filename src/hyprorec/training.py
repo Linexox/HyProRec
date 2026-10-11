@@ -139,22 +139,6 @@ class HyProRecTrainer(Trainer):
                     (weights * source_mask.float()).sum(dim=-1).mean(),
                     prefix,
                 )
-            clipped = weights.clamp_min(1e-8)
-            self._record(
-                f"attention/{view}/entropy",
-                -(clipped * clipped.log()).sum(dim=-1).mean(),
-                prefix,
-            )
-            self._record(
-                f"attention/{view}/top5_mass",
-                weights.topk(min(5, weights.size(-1)), dim=-1).values.sum(dim=-1).mean(),
-                prefix,
-            )
-            self._record(
-                f"attention/{view}/max_weight",
-                weights.max(dim=-1).values.mean(),
-                prefix,
-            )
 
     def _collect_diagnostics(self, outputs, inputs, model):
         # ``eval_*`` is rewritten by Transformers' W&B callback.  The
@@ -181,18 +165,6 @@ class HyProRecTrainer(Trainer):
             head = self._unwrapped(model).recommendation_head
             for view, value in zip(head.names, means):
                 self._record(f"rec_router/mean_{view}", value, prefix)
-            clipped = route.clamp_min(1e-8)
-            self._record(
-                "rec_router/entropy",
-                -(clipped * clipped.log()).sum(dim=-1).mean(),
-                prefix,
-            )
-            self._record(
-                "rec_router/top1_fraction",
-                route.argmax(dim=-1).eq(means.argmax()).float().mean(),
-                prefix,
-            )
-            self._record("rec_router/std", route.std(unbiased=False), prefix)
 
         if collect_auxiliary:
             self._attention_diagnostics(

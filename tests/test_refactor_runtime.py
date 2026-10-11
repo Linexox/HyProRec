@@ -8,6 +8,7 @@ import torch
 from hyprorec.data.redial import HoCRSDataCollator
 from hyprorec.scripts.grounding import _finalize_grounding
 from hyprorec.tracking import SwanLabTracker
+from hyprorec.training import HyProRecTrainer
 
 
 class _FakeTokenizer:
@@ -129,6 +130,38 @@ class GroundingProcessTest(unittest.TestCase):
                 None,
                 None,
                 None,
+            )
+        )
+
+
+class DiagnosticCostTest(unittest.TestCase):
+    def test_attention_diagnostics_only_collect_required_masses(self):
+        trainer = HyProRecTrainer.__new__(HyProRecTrainer)
+        trainer.attention_token_ids = {
+            "soft_prompt_token_id": 3,
+            "graph_start_token_ids": {"txt": 6},
+            "graph_end_token_ids": {"txt": 7},
+            "node_token_id": 4,
+            "hyperedge_token_id": 5,
+        }
+        recorded = []
+        trainer._record = lambda key, value, prefix="": recorded.append(key)
+        trainer._attention_diagnostics(
+            {
+                "input_ids": torch.tensor([[3, 6, 4, 5, 7, 8]]),
+                "pooling_mask": torch.ones(1, 6, dtype=torch.bool),
+            },
+            {"txt": torch.full((1, 6), 1 / 6)},
+            "",
+        )
+
+        self.assertIn("attention/txt/soft_prompt_mass", recorded)
+        self.assertIn("attention/txt/context_mass", recorded)
+        self.assertIn("attention/txt/hypergraph_mass", recorded)
+        self.assertFalse(
+            any(
+                key.endswith(("/entropy", "/top5_mass", "/max_weight"))
+                for key in recorded
             )
         )
 
