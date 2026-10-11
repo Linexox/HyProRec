@@ -25,7 +25,9 @@ loss and argmax results exactly. This is a correctness check; an end-to-end spee
 claim still requires the fixed-data comparison above.
 
 The data path also caches decoded histories, prompt tokenization, response
-tokenization, and strict local hypergraphs. `GraphTokenMoE` evaluates its expert
+tokenization, and strict local hypergraphs. Token caches use a bounded LRU (8192
+entries by default), so reuse does not retain an entire TG-ReDial epoch in host
+memory. `GraphTokenMoE` evaluates its expert
 weights with batched matrix multiplications. Trainer diagnostics now compute only
 the SwanLab-required attention masses and per-view router means; entropy, top-k,
 maximum-weight, top-1, and standard-deviation summaries are not materialized.

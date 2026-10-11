@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -121,18 +122,32 @@ class HoCRSDataCollator:
         processor: HoCRSProcessor,
         max_history_tokens: int = 256,
         max_sequence_tokens: int = 1024,
+        cache_size: int = 8192,
     ) -> None:
         self.processor = processor
         self.max_history_tokens = max_history_tokens
         self.max_sequence_tokens = max_sequence_tokens
         tokenizer = processor.tokenizer
-        self._history_cache: dict[str, str] = {}
-        self._prompt_cache: dict[tuple[str, tuple, str], list[int]] = {}
-        self._response_cache: dict[str, list[int]] = {}
+        self.cache_size = cache_size
+        self._history_cache = OrderedDict()
+        self._prompt_cache = OrderedDict()
+        self._response_cache = OrderedDict()
         if not 0 < max_history_tokens <= 256:
             raise ValueError("max_history_tokens must be in (0, 256].")
-        if max_sequence_tokens < 1:
-            raise ValueError("max_sequence_tokens must be positive.")
+        if max_sequence_tokens < 1 or cache_size < 1:
+            raise ValueError("sequence and cache limits must be positive.")
+
+    def _cache_get(self, cache, key):
+        value = cache.get(key)
+        if value is not None:
+            cache.move_to_end(key)
+        return value
+
+    def _cache_put(self, cache, key, value):
+        cache[key] = value
+        cache.move_to_end(key)
+        if len(cache) > self.cache_size:
+            cache.popitem(last=False)
 
     @staticmethod
     def _positions(input_ids, start_id, end_id, value_id, counts):
@@ -154,29 +169,29 @@ class HoCRSDataCollator:
         prompts = []
         prompt_lengths = []
         for sample in features:
-            context = self._history_cache.get(sample["context"])
+            context = self._cache_get(self._history_cache, sample["context"])
             if context is None:
                 history = tokenizer(sample["context"], add_special_tokens=False)[
                     "input_ids"
                 ][-self.max_history_tokens :]
                 context = tokenizer.decode(history, skip_special_tokens=False)
-                self._history_cache[sample["context"]] = context
+                self._cache_put(self._history_cache, sample["context"], context)
             sizes = {
                 view: (graph.num_nodes, graph.num_hyperedges)
                 for view, graph in sample["hypergraphs"].items()
             }
             prompt_key = (context, tuple(sizes.items()), sample["role"])
-            prompt_ids = self._prompt_cache.get(prompt_key)
+            prompt_ids = self._cache_get(self._prompt_cache, prompt_key)
             if prompt_ids is None:
                 prompt = self.processor.build_prompt(context, sizes)
                 prompt += f"\n{sample['role']}:"
                 prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-                self._prompt_cache[prompt_key] = prompt_ids
+                self._cache_put(self._prompt_cache, prompt_key, prompt_ids)
             response = sample["response"] + (tokenizer.eos_token or "")
-            response_ids = self._response_cache.get(response)
+            response_ids = self._cache_get(self._response_cache, response)
             if response_ids is None:
                 response_ids = tokenizer(response, add_special_tokens=False)["input_ids"]
-                self._response_cache[response] = response_ids
+                self._cache_put(self._response_cache, response, response_ids)
             prompts.append({"input_ids": prompt_ids + response_ids})
             prompt_lengths.append(len(prompt_ids))
         encoded = tokenizer.pad(prompts, padding=True, return_tensors="pt")

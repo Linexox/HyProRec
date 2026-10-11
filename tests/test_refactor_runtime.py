@@ -76,6 +76,23 @@ class CollatorCacheTest(unittest.TestCase):
         self.assertEqual(len(collator._prompt_cache), 1)
         self.assertEqual(len(collator._response_cache), 1)
 
+    def test_token_caches_are_bounded(self):
+        tokenizer = _FakeTokenizer()
+        collator = HoCRSDataCollator(_FakeProcessor(tokenizer), cache_size=2)
+        for index in range(3):
+            sample = {
+                "context": f"history-{index}{'x' * index}",
+                "response": f"response-{index}",
+                "role": "assistant",
+                "target_item_id": 0,
+                "hypergraphs": {},
+            }
+            collator([sample])
+
+        self.assertLessEqual(len(collator._prompt_cache), 2)
+        self.assertLessEqual(len(collator._response_cache), 2)
+        self.assertNotIn(("x" * 8, (), "assistant"), collator._prompt_cache)
+
 
 class SwanLabProcessTest(unittest.TestCase):
     def test_nonzero_rank_does_not_create_a_run(self):
