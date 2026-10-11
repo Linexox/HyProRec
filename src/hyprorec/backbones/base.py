@@ -262,6 +262,30 @@ class QwenOmniAdapter(BackboneAdapter):
 class InteractiveOmniAdapter(BackboneAdapter):
     model_type = "interactiveomni"
 
+    def _decoder(self) -> nn.Module:
+        language_model = getattr(self.model, "language_model", None)
+        decoder = getattr(language_model, "model", None)
+        if isinstance(decoder, nn.Module):
+            return decoder
+        return super()._decoder()
+
+    def get_output_embeddings(self) -> nn.Module:
+        language_model = getattr(self.model, "language_model", None)
+        getter = getattr(language_model, "get_output_embeddings", None)
+        if callable(getter):
+            embeddings = getter()
+            if embeddings is not None:
+                return embeddings
+        return super().get_output_embeddings()
+
+    def set_output_embeddings(self, value: nn.Module) -> None:
+        language_model = getattr(self.model, "language_model", None)
+        setter = getattr(language_model, "set_output_embeddings", None)
+        if callable(setter):
+            setter(value)
+            return
+        super().set_output_embeddings(value)
+
     @classmethod
     def load_model(cls, name_or_path: str) -> nn.Module:
         config = AutoConfig.from_pretrained(
