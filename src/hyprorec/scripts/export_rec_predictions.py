@@ -12,11 +12,12 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import set_seed
 
+from hyprorec.backbones import BackboneAdapter
 from hyprorec.config import parse_experiment_args
 from hyprorec.data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
 from hyprorec.data.hypergraph import HypergraphTable
 from hyprorec.metrics import recommendation_metrics
-from hyprorec.modeling_hocrs import HoCRSRecommendationModel, load_tokenizer
+from hyprorec.modeling_hocrs import HoCRSRecommendationModel
 from hyprorec.processing_hocrs import HoCRSProcessor
 
 SPLIT_FILES = {"valid": "valid_data.json", "test": "test_data.json"}
@@ -157,7 +158,7 @@ def main() -> None:
         if (checkpoint.parent / "tokenizer.json").exists()
         else Path(model_args.backbone_name_or_path)
     )
-    tokenizer = load_tokenizer(str(tokenizer_path))
+    tokenizer = BackboneAdapter.load_tokenizer(str(tokenizer_path))
     load_kwargs: dict[str, Any] = {
         "torch_dtype": torch.bfloat16 if device.type == "cuda" else torch.float32,
         "low_cpu_mem_usage": True,

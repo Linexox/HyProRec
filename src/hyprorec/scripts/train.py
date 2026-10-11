@@ -9,12 +9,12 @@ from dotenv import load_dotenv
 from transformers import set_seed
 from transformers.trainer_utils import get_last_checkpoint
 
+from ..backbones import load_backbone_adapter
 from ..config import parse_experiment_args
 from ..data import HoCRSDataCollator, HoCRSDataset, HoCRSDatasetConfig
 from ..data.hypergraph import HypergraphTable
 from ..evaluation import build_compute_metrics
 from ..model_factory import build_model, load_modality_tables
-from ..modeling_hocrs import load_tokenizer
 from ..processing_hocrs import HoCRSProcessor
 from ..provenance import save_provenance
 from ..training import FourValidChecksCallback, HyProRecTrainer, validation_steps
@@ -65,10 +65,17 @@ def main() -> None:
     training_args.report_to = []
     set_seed(training_args.seed)
 
-    tokenizer = load_tokenizer(model_args.backbone_name_or_path)
+    backbone_adapter = load_backbone_adapter(model_args.backbone_name_or_path)
+    tokenizer = backbone_adapter.tokenizer
     processor = HoCRSProcessor(tokenizer, model_args.num_prompt_tokens)
     tables = load_modality_tables(data_args, model_args)
-    model = build_model(model_args, data_args, processor, tables)
+    model = build_model(
+        model_args,
+        data_args,
+        processor,
+        tables,
+        backbone_adapter,
+    )
     tracker = SwanLabTracker.start(model_args, data_args, training_args, config_path)
 
     table_path = data_args.hyperedge_table_path or str(

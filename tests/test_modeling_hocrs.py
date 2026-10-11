@@ -3,11 +3,38 @@ import unittest
 import torch
 from transformers import AutoModelForCausalLM, GPT2Config
 
+from hyprorec.backbones import adapter_from_model
 from hyprorec.configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
 from hyprorec.modeling_hocrs import HoCRSRecommendationModel
 
 
 class BackboneEncodingTest(unittest.TestCase):
+    def test_backbone_adapter_exposes_decoder_contract(self) -> None:
+        config = GPT2Config(
+            n_layer=1,
+            n_head=2,
+            n_embd=16,
+            vocab_size=32,
+            bos_token_id=0,
+            eos_token_id=1,
+            pad_token_id=2,
+        )
+        backbone = AutoModelForCausalLM.from_config(config)
+        adapter = adapter_from_model(backbone)
+        input_ids = torch.randint(0, 3, (1, 4))
+        embeddings = adapter.get_input_embeddings()(input_ids)
+        output = adapter.encode_condition(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids),
+            inputs_embeds=embeddings,
+            use_cache=True,
+        )
+
+        hidden = adapter.get_last_hidden_state(output)
+        self.assertEqual(hidden.shape, (1, 4, 16))
+        self.assertEqual(adapter.compute_lm_logits(hidden).shape, (1, 4, 32))
+        self.assertIsNotNone(adapter.prepare_generation_cache(output)["past_key_values"])
+
     def test_encoding_keeps_only_last_hidden_state_by_default(self) -> None:
         backbone_config = GPT2Config(
             n_layer=2,

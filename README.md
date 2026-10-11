@@ -16,11 +16,13 @@ representation separately for the enabled semantic views (txt, img, ado, and
 vdo), scores the corresponding item tables, and uses a sample-level router to
 fuse the view scores.
 
-The graph preparation command writes ten cosine-similarity candidates per
+The data preparation scripts live with the immutable dataset assets on LAB.
+The hypergraph preparation command writes ten cosine-similarity candidates per
 anchor for each semantic view:
 
 ```bash
-python -m hyprorec.scripts.prepare_hyperedge_table --dataset-dir data/hyprorec-redial --topk 10
+python /data2/lhf/.DATA/hyprorec-redial/scripts/prepare_hyperedge_table.py \
+  --dataset-dir /data2/lhf/.DATA/hyprorec-redial --topk 10
 ```
 
 Training can select the first `topk` neighbors or randomly sample `topk` from

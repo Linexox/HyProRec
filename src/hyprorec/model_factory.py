@@ -7,9 +7,10 @@ from pathlib import Path
 import torch
 
 from .arguments import DataArguments, ModelArguments
+from .backbones import BackboneAdapter
 from .configuration_hocrs import HoCRSConfig, HoCRSHypergraphConfig
 from .constants import MODALITIES
-from .modeling_hocrs import HoCRSRecommendationModel, load_backbone
+from .modeling_hocrs import HoCRSRecommendationModel
 from .processing_hocrs import HoCRSProcessor
 
 
@@ -38,9 +39,10 @@ def build_model(
     data_args: DataArguments,
     processor: HoCRSProcessor,
     tables: dict[str, torch.Tensor],
+    backbone_adapter: BackboneAdapter,
 ) -> HoCRSRecommendationModel:
-    backbone = load_backbone(model_args.backbone_name_or_path)
-    backbone.resize_token_embeddings(len(processor.tokenizer))
+    backbone_adapter.resize_token_embeddings(len(processor.tokenizer))
+    backbone = backbone_adapter.model
     num_items = next(iter(tables.values())).size(0)
     graph_configs = {}
     for view in data_args.views:
@@ -70,7 +72,7 @@ def build_model(
         prompt_token_id=processor.get_token_id_map()["soft_prompt_token_id"],
         **{f"{view}_hypergraph_config": value for view, value in graph_configs.items()},
     )
-    model = HoCRSRecommendationModel(config, backbone=backbone)
+    model = HoCRSRecommendationModel(config, backbone_adapter=backbone_adapter)
     if model_args.grounding_checkpoint_path:
         model.load_grounding_checkpoint(model_args.grounding_checkpoint_path)
     model.initialize_feature_tables(tables)

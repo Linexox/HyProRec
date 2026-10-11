@@ -5,154 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
-import types
 from typing import Mapping
 
 import torch
 from torch import nn
 import torch.nn.functional as F
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
+from transformers import PreTrainedModel
 from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers.utils import ModelOutput
 
 from .configuration_hocrs import HoCRSConfig, canonical_feature_dims
-
-
-def load_tokenizer(name_or_path: str):
-    try:
-        return AutoTokenizer.from_pretrained(name_or_path)
-    except ValueError:
-        return AutoTokenizer.from_pretrained(name_or_path, trust_remote_code=True)
-
-
-def load_backbone(name_or_path: str) -> nn.Module:
-    try:
-        config = AutoConfig.from_pretrained(name_or_path)
-    except ValueError:
-        config = AutoConfig.from_pretrained(name_or_path, trust_remote_code=True)
-    if config.model_type == "qwen2_5_omni" and "Qwen2_5OmniModel" in (
-        getattr(config, "architectures", None) or ()
-    ):
-        from transformers import Qwen2_5OmniThinkerForConditionalGeneration
-
-        thinker = Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
-            name_or_path,
-            torch_dtype="auto",
-            low_cpu_mem_usage=True,
-        )
-        # The published checkpoint is a composite Omni model.  Loading the
-        # thinker directly skips the unused talker and its optimizer memory.
-        return _ensure_lm_head_accessors(thinker)
-    if config.model_type == "qwen2_5_omni_thinker":
-        from transformers import Qwen2_5OmniThinkerForConditionalGeneration
-
-        return _ensure_lm_head_accessors(
-            Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
-                name_or_path,
-                torch_dtype="auto",
-                low_cpu_mem_usage=True,
-            )
-        )
-    custom_code = bool(getattr(config, "auto_map", None))
-    is_multimodal = config.model_type in {"llava", "qwen2_5_vl"} or (
-        "omni" in config.model_type
-    )
-    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-    if is_multimodal and not custom_code:
-        from transformers import AutoModelForImageTextToText
-
-        model = AutoModelForImageTextToText.from_pretrained(
-            name_or_path,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-        )
-    else:
-        kwargs = {
-            "torch_dtype": dtype,
-            "low_cpu_mem_usage": True,
-        }
-        if custom_code:
-            kwargs["trust_remote_code"] = True
-        model = AutoModelForCausalLM.from_pretrained(name_or_path, **kwargs)
-    return _ensure_lm_head_accessors(model)
-
-
-def _ensure_lm_head_accessors(model: nn.Module) -> nn.Module:
-    """Expose Qwen Omni's ``lm_head`` through the standard HF API.
-
-    Older Transformers releases do not implement ``get_output_embeddings`` on
-    the Omni thinker.  Without this accessor, resizing tokenizer embeddings
-    leaves the LM head at the old vocabulary size and makes the loss reshape
-    invalid.
-    """
-    if model.get_output_embeddings() is None:
-        if hasattr(model, "lm_head"):
-            model.get_output_embeddings = types.MethodType(
-                lambda self: self.lm_head, model
-            )
-            model.set_output_embeddings = types.MethodType(
-                lambda self, value: setattr(self, "lm_head", value), model
-            )
-        else:
-            for name in ("language_model", "llm"):
-                decoder = getattr(model, name, None)
-                if decoder is None or decoder.get_output_embeddings() is None:
-                    continue
-                model.get_output_embeddings = types.MethodType(
-                    lambda self, decoder=decoder: decoder.get_output_embeddings(),
-                    model,
-                )
-                model.set_output_embeddings = types.MethodType(
-                    lambda self, value, decoder=decoder:
-                    decoder.set_output_embeddings(value),
-                    model,
-                )
-                break
-    return model
-
-
-def _backbone_from_config(config) -> nn.Module:
-    if config.model_type == "qwen2_5_omni":
-        thinker_config = getattr(config, "thinker_config", None)
-        if thinker_config is not None:
-            from transformers import Qwen2_5OmniThinkerForConditionalGeneration
-
-            thinker = Qwen2_5OmniThinkerForConditionalGeneration(thinker_config)
-            return _ensure_lm_head_accessors(thinker)
-        from transformers import Qwen2_5OmniForConditionalGeneration
-
-        return _ensure_lm_head_accessors(
-            Qwen2_5OmniForConditionalGeneration(config)
-        )
-    if config.model_type == "qwen2_5_omni_thinker":
-        from transformers import Qwen2_5OmniThinkerForConditionalGeneration
-
-        thinker = Qwen2_5OmniThinkerForConditionalGeneration(config)
-        return _ensure_lm_head_accessors(thinker)
-    custom_code = bool(getattr(config, "auto_map", None))
-    is_multimodal = config.model_type in {"llava", "qwen2_5_vl"} or (
-        "omni" in config.model_type
-    )
-    if is_multimodal and not custom_code:
-        from transformers import AutoModelForImageTextToText
-
-        model = AutoModelForImageTextToText.from_config(config)
-    else:
-        kwargs = {"trust_remote_code": True} if custom_code else {}
-        model = AutoModelForCausalLM.from_config(config, **kwargs)
-    return _ensure_lm_head_accessors(model)
-
-
-def _hidden_size(config) -> int:
-    for name in ("hidden_size", "n_embd", "d_model"):
-        if getattr(config, name, None) is not None:
-            return int(getattr(config, name))
-    for name in ("text_config", "llm_config"):
-        nested = getattr(config, name, None)
-        if nested is not None:
-            return _hidden_size(nested)
-    raise AttributeError("backbone config has no hidden size")
+from .backbones import BackboneAdapter, adapter_from_config, adapter_from_model
 
 
 @dataclass
@@ -464,10 +328,22 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
                 remapped[key.removeprefix(prefix)] = remapped.pop(key)
         return super().load_state_dict(remapped, strict=strict, assign=assign)
 
-    def __init__(self, config: HoCRSConfig, backbone: nn.Module | None = None) -> None:
+    def __init__(
+        self,
+        config: HoCRSConfig,
+        backbone: nn.Module | None = None,
+        backbone_adapter: BackboneAdapter | None = None,
+    ) -> None:
         super().__init__(config)
-        self.backbone = backbone or _backbone_from_config(config.backbone_config)
-        hidden_size = _hidden_size(config.backbone_config)
+        if backbone_adapter is None:
+            backbone_adapter = (
+                adapter_from_model(backbone)
+                if backbone is not None
+                else adapter_from_config(config.backbone_config)
+            )
+        self.backbone_adapter = backbone_adapter
+        self.backbone = backbone_adapter.model
+        hidden_size = backbone_adapter.hidden_size
         self.soft_prompt_embeddings = nn.Embedding(config.num_prompt_tokens, hidden_size)
         self.hypergraph_encoders = nn.ModuleDict()
         self.hypergraph_projectors = nn.ModuleDict()
@@ -498,7 +374,6 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         self.graph_moe = GraphTokenMoE(hidden_size, config.views)
         if config.freeze_backbone:
             self.backbone.requires_grad_(False)
-        self.post_init()
         self.graph_moe.reset_output_layers()
 
     def initialize_feature_tables(self, tables: Mapping[str, torch.Tensor]) -> None:
@@ -543,24 +418,24 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             encoder.requires_grad_(False)
 
     def get_input_embeddings(self):
-        return self.backbone.get_input_embeddings()
+        return self.backbone_adapter.get_input_embeddings()
 
     def set_input_embeddings(self, value):
-        self.backbone.set_input_embeddings(value)
+        self.backbone_adapter.set_input_embeddings(value)
 
     def get_output_embeddings(self):
-        return self.backbone.get_output_embeddings()
+        return self.backbone_adapter.get_output_embeddings()
 
     def set_output_embeddings(self, value):
-        self.backbone.set_output_embeddings(value)
+        self.backbone_adapter.set_output_embeddings(value)
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
-        self.backbone.gradient_checkpointing_enable(
+        self.backbone_adapter.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs=gradient_checkpointing_kwargs
         )
 
     def gradient_checkpointing_disable(self):
-        self.backbone.gradient_checkpointing_disable()
+        self.backbone_adapter.gradient_checkpointing_disable()
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -578,17 +453,20 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
     def _inject(self, input_ids, hypergraphs):
         embeds = self.get_input_embeddings()(input_ids).clone()
         prompt_positions = input_ids == self.config.prompt_token_id
-        prompt_ids = torch.arange(
-            self.config.num_prompt_tokens, device=input_ids.device
-        ).expand(input_ids.size(0), -1)
+        prompt_ids = (
+            torch.arange(self.config.num_prompt_tokens)
+            .expand(input_ids.size(0), -1)
+            .to(input_ids.device)
+        )
         embeds[prompt_positions] = (
             self.soft_prompt_embeddings(prompt_ids)
             .reshape(-1, embeds.size(-1))
             .to(embeds.dtype)
         )
         for view, graph in hypergraphs.items():
-            node_features = getattr(self, f"{view}_feature_table").index_select(
-                0, graph["node_ids"]
+            node_features = (
+                getattr(self, f"{view}_feature_table")
+                .index_select(0, graph["node_ids"])
             )
             encoded = self.hypergraph_encoders[view](
                 node_features,
@@ -598,39 +476,27 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             projected_graph = self.hypergraph_projectors[view](encoded)
             projected = self.graph_moe(
                 view=view,
-                features=torch.cat(
-                    (projected_graph.node_features, projected_graph.hyperedge_features)
-                ),
+                features=torch.cat((
+                    projected_graph.node_features,
+                    projected_graph.hyperedge_features
+                )),
             )
             node_count = graph["node_positions"].size(0)
             node_positions = graph["node_positions"]
             hyperedge_positions = graph["hyperedge_positions"]
-            embeds[node_positions[:, 0], node_positions[:, 1]] = projected[
-                :node_count
-            ].to(embeds.dtype)
-            embeds[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = projected[
-                node_count:
-            ].to(embeds.dtype)
+            projected = projected.to(embeds.dtype)
+            embeds[node_positions[:, 0], node_positions[:, 1]]              = projected[:node_count]
+            embeds[hyperedge_positions[:, 0], hyperedge_positions[:, 1]]    = projected[node_count:]
         return embeds
-
-    def _decoder_model(self) -> nn.Module:
-        for name in ("model", "transformer", "language_model", "llm"):
-            decoder = getattr(self.backbone, name, None)
-            if isinstance(decoder, nn.Module):
-                for nested_name in ("model", "transformer"):
-                    nested = getattr(decoder, nested_name, None)
-                    if isinstance(nested, nn.Module):
-                        return nested
-                return decoder
-        return self.backbone
 
     def encode(self, input_ids, attention_mask=None, hypergraphs=None, **kwargs):
         kwargs.pop("return_dict", None)
-        requested_hidden_states = kwargs.pop("output_hidden_states", False)
-        labels = kwargs.pop("labels", None)
         kwargs.pop("inputs_embeds", None)
-        use_cache = kwargs.pop("use_cache", not self.training)
-        cache = kwargs.get("past_key_values")
+        requested_hidden_states = kwargs.pop("output_hidden_states", False)
+        labels      = kwargs.pop("labels", None)
+        use_cache   = kwargs.pop("use_cache", not self.training)
+        cache       = kwargs.pop("past_key_values", None)
+
         cached_step = cache is not None and cache.get_seq_length() > 0
         if cached_step:
             self._last_graph_moe_diagnostics = {}
@@ -639,16 +505,17 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             if cached_step
             else self._inject(input_ids, hypergraphs or {})
         )
-        decoder = self._decoder_model()
-        decoder_output = decoder(
-            inputs_embeds=embeds,
+
+        decoder_output = self.backbone_adapter.encode_condition(
+            input_ids=input_ids,
             attention_mask=attention_mask,
+            inputs_embeds=embeds,
+            past_key_values=cache,
             output_hidden_states=requested_hidden_states,
-            return_dict=True,
             use_cache=use_cache,
             **kwargs,
         )
-        hidden = decoder_output.last_hidden_state
+        hidden = self.backbone_adapter.get_last_hidden_state(decoder_output)
         logits = None
         loss = None
         predictions = None
@@ -656,7 +523,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             targets = labels[..., 1:]
             supervised = targets.ne(-100)
             selected_hidden = hidden[..., :-1, :][supervised]
-            selected_logits = self.get_output_embeddings()(selected_hidden)
+            selected_logits = self.backbone_adapter.compute_lm_logits(selected_hidden)
             loss = F.cross_entropy(
                 selected_logits.float(),
                 targets[supervised],
@@ -665,7 +532,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
                 predictions = targets.new_full(targets.shape, -100)
                 predictions[supervised] = selected_logits.argmax(dim=-1)
         else:
-            logits = self.get_output_embeddings()(hidden)
+            logits = self.backbone_adapter.compute_lm_logits(hidden)
         hidden_states = decoder_output.hidden_states
         if hidden_states is None:
             hidden_states = (hidden,)
@@ -673,22 +540,18 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
             loss=loss,
             logits=logits,
             conversation_predictions=predictions,
-            past_key_values=decoder_output.past_key_values,
+            **self.backbone_adapter.prepare_generation_cache(decoder_output),
             hidden_states=hidden_states,
-            attentions=getattr(decoder_output, "attentions", None),
+            attentions=getattr(decoder_output.raw, "attentions", None),
         )
-        for name in ("rope_deltas", "cache_position"):
-            value = getattr(decoder_output, name, None)
-            if value is not None:
-                output[name] = value
         return output
 
 
 class HoCRSRecommendationModel(HoCRSBaseModel):
-    def __init__(self, config, backbone=None):
-        super().__init__(config, backbone)
+    def __init__(self, config, backbone=None, backbone_adapter=None):
+        super().__init__(config, backbone, backbone_adapter)
         self.recommendation_head = ItemTableHead(
-            _hidden_size(config.backbone_config),
+            self.backbone_adapter.hidden_size,
             config.item_feature_dims,
             config.item_table_view,
             config.recommendation_hidden_dim,
@@ -755,6 +618,4 @@ __all__ = [
     "RecommendationHeadOutput",
     "HoCRSRecommendationOutput",
     "hypergraph_propagate",
-    "load_backbone",
-    "load_tokenizer",
 ]
