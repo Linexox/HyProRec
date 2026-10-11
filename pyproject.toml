@@ -19,7 +19,7 @@ dependencies = [
     "einops",
     "librosa",
     "omegaconf",
-    "onnxruntime",
+    "onnxruntime==1.23.0",
     "pillow",
     "scipy",
     "swanlab>=0.6.0",
