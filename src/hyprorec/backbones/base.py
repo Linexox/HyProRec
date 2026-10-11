@@ -217,10 +217,18 @@ class BackboneAdapter:
         )
 
     def _decoder(self) -> nn.Module:
+        candidates: list[nn.Module] = []
         for name in ("model", "transformer", "language_model", "llm"):
             decoder = getattr(self.model, name, None)
             if not isinstance(decoder, nn.Module):
                 continue
+            candidates.append(decoder)
+            getter = getattr(decoder, "get_output_embeddings", None)
+            if callable(getter) and getter() is not None:
+                return decoder
+            if hasattr(decoder, "lm_head"):
+                return decoder
+        for decoder in candidates:
             nested = getattr(decoder, "model", None)
             return nested if isinstance(nested, nn.Module) else decoder
         return self.model
