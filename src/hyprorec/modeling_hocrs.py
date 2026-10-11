@@ -253,7 +253,6 @@ class GraphTokenMoE(nn.Module):
         view: str,
         return_diagnostics: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        
         view_index = self.view_to_index[view]
         view_embedding = self.view_embeddings[view_index]
         view_embedding = view_embedding.expand(features.size(0), -1)
@@ -370,7 +369,10 @@ class ItemTableHead(nn.Module):
         attention_weights = {}
         users = {}
         for name in self.names:
-            pooled[name], attention_weights[name] = self.attention_poolers[name](hidden, pooling_mask)
+            pooled[name], attention_weights[name] = self.attention_poolers[name](
+                hidden,
+                pooling_mask,
+            )
             users[name] = F.normalize(self.user_projects[name](pooled[name].float()), dim=-1)
         items = self.item_embeddings(features)
         view_logits = tuple(
@@ -601,8 +603,14 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
                 ),
             )
             node_count = graph["node_positions"].size(0)
-            embeds[graph["node_positions"][:, 0], graph["node_positions"][:, 1]] = projected[:node_count].to(embeds.dtype)
-            embeds[graph["hyperedge_positions"][:, 0], graph["hyperedge_positions"][:, 1]] = projected[node_count:].to(embeds.dtype)
+            node_positions = graph["node_positions"]
+            hyperedge_positions = graph["hyperedge_positions"]
+            embeds[node_positions[:, 0], node_positions[:, 1]] = projected[
+                :node_count
+            ].to(embeds.dtype)
+            embeds[hyperedge_positions[:, 0], hyperedge_positions[:, 1]] = projected[
+                node_count:
+            ].to(embeds.dtype)
         return embeds
 
     def _decoder_model(self) -> nn.Module:

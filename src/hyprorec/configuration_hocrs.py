@@ -124,7 +124,10 @@ class HoCRSConfig(PretrainedConfig):
             or recommendation_router_hidden_dim < 1
             or num_prompt_tokens != 20
         ):
-            raise ValueError("num_items and recommendation_hidden_dim must be positive; prompts must have length 20.")
+            raise ValueError(
+                "num_items and recommendation_hidden_dim must be positive; "
+                "prompts must have length 20."
+            )
         if recommendation_temperature <= 0:
             raise ValueError("recommendation_temperature must be positive.")
         if recommendation_view_loss_weight < 0:

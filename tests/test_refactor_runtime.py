@@ -32,11 +32,18 @@ class _FakeTokenizer:
 
     def pad(self, prompts, **kwargs):
         width = max(len(item["input_ids"]) for item in prompts)
-        input_ids = [item["input_ids"] + [0] * (width - len(item["input_ids"])) for item in prompts]
+        input_ids = [
+            item["input_ids"] + [0] * (width - len(item["input_ids"]))
+            for item in prompts
+        ]
         return {
             "input_ids": torch.tensor(input_ids),
             "attention_mask": torch.tensor(
-                [[1] * len(item["input_ids"]) + [0] * (width - len(item["input_ids"])) for item in prompts]
+                [
+                    [1] * len(item["input_ids"])
+                    + [0] * (width - len(item["input_ids"]))
+                    for item in prompts
+                ]
             ),
         }
 

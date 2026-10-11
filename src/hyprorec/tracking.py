@@ -52,7 +52,11 @@ class SwanLabTracker:
             else f"only-{views}"
         )
         requested_name = training_args.run_name
-        name = requested_name if requested_name and requested_name.startswith(("only-", "full")) else composition
+        name = (
+            requested_name
+            if requested_name and requested_name.startswith(("only-", "full"))
+            else composition
+        )
         tags = [
             f"dataset:{dataset}",
             f"views:{views}",
@@ -116,11 +120,23 @@ class SwanLabTracker:
                     other[f"other_{stage}/AttnPooling/{allowed[metric]}"] = value
                 elif metric.endswith("_hypergraph_mass"):
                     source = metric.removesuffix("_hypergraph_mass")
-                    other[f"other_{stage}/AttnPooling/{view}-{source}-hyg-mass"] = value
+                    other[
+                        f"other_{stage}/AttnPooling/{view}-{source}-hyg-mass"
+                    ] = value
             elif clean.startswith("rec_router/mean_"):
                 view = clean.removeprefix("rec_router/mean_")
                 other[f"other_{stage}/RecRouter/{view}"] = value
-            elif clean.startswith(("loss/", "recall@", "ndcg@", "mrr@", "bleu@", "dist@", "response_tokens")):
+            elif clean.startswith(
+                (
+                    "loss/",
+                    "recall@",
+                    "ndcg@",
+                    "mrr@",
+                    "bleu@",
+                    "dist@",
+                    "response_tokens",
+                )
+            ):
                 main[f"{stage}/{clean}"] = value
         self.log({**main, **other})
 
