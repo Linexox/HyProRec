@@ -306,6 +306,9 @@ class InteractiveOmniAdapter(BackboneAdapter):
 
     @classmethod
     def _model_from_config(cls, config: Any) -> nn.Module:
+        llm_config = getattr(config, "llm_config", None)
+        if llm_config is not None:
+            llm_config._attn_implementation = "eager"
         return AutoModelForCausalLM.from_config(config, trust_remote_code=True)
 
 
