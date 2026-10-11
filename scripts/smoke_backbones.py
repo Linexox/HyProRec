@@ -113,7 +113,7 @@ def run_one(name: str, path: str, device: torch.device) -> dict[str, object]:
         "model_type": adapter.config.model_type,
         "hidden_size": adapter.hidden_size,
         "input_shape": list(input_ids.shape),
-        "hidden_shape": list(output.hidden_states[-1].shape),
+        "hidden_shape": list(encoded.hidden_states[-1].shape),
         "recommendation_shape": list(output.recommendation_logits.shape),
         "conversation_shape": list(output.conversation_logits.shape),
         "generated_shape": list(generated.shape),
