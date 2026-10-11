@@ -31,30 +31,40 @@ class GroundingTrainer(StageAwareTrainerMixin, Trainer):
     def __init__(self, *args, swanlab_tracker=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.swanlab_tracker = swanlab_tracker
-        self._grounding_sum = {}
-        self._grounding_count = 0
+        self._grounding_sum: dict[str, dict[str, float]] = {}
+        self._grounding_count: dict[str, int] = {}
 
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        outputs = model(**inputs)
+    def _accumulate_grounding_losses(self, outputs) -> None:
+        """Accumulate losses in the explicit train/eval stage bucket.
+
+        Trainer can cross an evaluation boundary between two logging calls.
+        Keeping one global accumulator would mix training and evaluation
+        values in whichever stage happens to log next.
+        """
+        stage = self._metric_stage
+        sums = self._grounding_sum.setdefault(stage, {})
         for name in ("loss", "ga_sa_loss", "ga_sn_loss", "sa_sn_loss"):
             value = getattr(outputs, name, None)
             if value is not None:
-                self._grounding_sum[name] = self._grounding_sum.get(name, 0.0) + float(
+                sums[name] = sums.get(name, 0.0) + float(
                     value.detach().float().cpu()
                 )
-        self._grounding_count += 1
+        self._grounding_count[stage] = self._grounding_count.get(stage, 0) + 1
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        outputs = model(**inputs)
+        self._accumulate_grounding_losses(outputs)
         loss = outputs.loss
         return (loss, outputs) if return_outputs else loss
 
     def log(self, logs, *args, **kwargs):
         logs = dict(logs)
-        if self._grounding_count:
-            for name, value in self._grounding_sum.items():
-                logs[name] = value / self._grounding_count
-            self._grounding_sum.clear()
-            self._grounding_count = 0
+        stage = self._metric_stage
+        count = self._grounding_count.pop(stage, 0)
+        if count:
+            for name, value in self._grounding_sum.pop(stage, {}).items():
+                logs[name] = value / count
         if self.swanlab_tracker is not None and self.is_world_process_zero():
-            stage = self._metric_stage
             self.swanlab_tracker.log_grounding(
                 stage,
                 canonical_stage_logs(stage, logs),

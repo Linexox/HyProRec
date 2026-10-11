@@ -6,7 +6,7 @@ from unittest.mock import patch
 import torch
 
 from hyprorec.data.redial import HoCRSDataCollator
-from hyprorec.scripts.grounding import _finalize_grounding
+from hyprorec.scripts.grounding import GroundingTrainer, _finalize_grounding
 from hyprorec.tracking import SwanLabTracker
 from hyprorec.training import (
     HyProRecTrainer,
@@ -207,6 +207,40 @@ class SwanLabStageTest(unittest.TestCase):
 
 
 class GroundingProcessTest(unittest.TestCase):
+    def test_grounding_loss_accumulators_are_isolated_by_stage(self):
+        trainer = GroundingTrainer.__new__(GroundingTrainer)
+        trainer._metric_stage = "train"
+        trainer._grounding_sum = {}
+        trainer._grounding_count = {}
+        train_outputs = type(
+            "Outputs",
+            (),
+            {
+                "loss": torch.tensor(100.0),
+                "ga_sa_loss": torch.tensor(10.0),
+                "ga_sn_loss": None,
+                "sa_sn_loss": None,
+            },
+        )()
+        trainer._accumulate_grounding_losses(train_outputs)
+
+        trainer._metric_stage = "eval"
+        eval_outputs = type(
+            "Outputs",
+            (),
+            {
+                "loss": torch.tensor(2.0),
+                "ga_sa_loss": torch.tensor(1.0),
+                "ga_sn_loss": None,
+                "sa_sn_loss": None,
+            },
+        )()
+        trainer._accumulate_grounding_losses(eval_outputs)
+
+        self.assertEqual(trainer._grounding_count, {"train": 1, "eval": 1})
+        self.assertEqual(trainer._grounding_sum["train"]["loss"], 100.0)
+        self.assertEqual(trainer._grounding_sum["eval"]["loss"], 2.0)
+
     def test_nonzero_rank_skips_combined_checkpoint_finalization(self):
         self.assertIsNone(
             _finalize_grounding(
