@@ -135,7 +135,12 @@ class SwanLabTracker:
                 main[f"{stage}/{key}"] = value
         self.log({**main, **other})
 
-    def log_grounding(self, stage: str, logs: dict[str, Any]) -> None:
+    def log_grounding(
+        self,
+        stage: str,
+        logs: dict[str, Any],
+        view: str | None = None,
+    ) -> None:
         values = {}
         names = {
             "loss": "total",
@@ -143,9 +148,12 @@ class SwanLabTracker:
             "ga_sn_loss": "ga-sn",
             "sa_sn_loss": "sa-sn",
         }
+        prefix = f"{stage}/grounding"
+        if view is not None:
+            prefix = f"{prefix}/{view}"
         for key, value in logs.items():
             if key in names:
-                values[f"{stage}/grounding/{names[key]}"] = value
+                values[f"{prefix}/{names[key]}"] = value
         self.log(values)
 
     def finish(self, state: str = "success", error: str | None = None) -> None:

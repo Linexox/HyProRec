@@ -29,6 +29,7 @@ from ..training import StageAwareTrainerMixin, canonical_stage_logs
 
 class GroundingTrainer(StageAwareTrainerMixin, Trainer):
     def __init__(self, *args, swanlab_tracker=None, **kwargs):
+        self.grounding_view = kwargs.pop("grounding_view", None)
         super().__init__(*args, **kwargs)
         self.swanlab_tracker = swanlab_tracker
         self._grounding_sum: dict[str, dict[str, float]] = {}
@@ -68,6 +69,7 @@ class GroundingTrainer(StageAwareTrainerMixin, Trainer):
             self.swanlab_tracker.log_grounding(
                 stage,
                 canonical_stage_logs(stage, logs),
+                view=self.grounding_view,
             )
         return super().log(logs, *args, **kwargs)
 
@@ -220,6 +222,7 @@ def main() -> None:
             eval_dataset=eval_dataset,
             callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
             swanlab_tracker=tracker,
+            grounding_view=view,
         )
         result = trainer.train(
             resume_from_checkpoint=training_args.resume_from_checkpoint

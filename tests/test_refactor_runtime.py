@@ -165,6 +165,7 @@ class SwanLabStageTest(unittest.TestCase):
                 "loss": 2.0,
                 "ga_sa_loss": 0.75,
             },
+            view="txt",
         )
 
         self.assertEqual(
@@ -178,9 +179,28 @@ class SwanLabStageTest(unittest.TestCase):
         self.assertEqual(
             recorded[1],
             {
-                "eval/grounding/total": 2.0,
-                "eval/grounding/ga-sa": 0.75,
+                "eval/grounding/txt/total": 2.0,
+                "eval/grounding/txt/ga-sa": 0.75,
             },
+        )
+
+    def test_grounding_metrics_are_namespaced_by_view(self):
+        tracker = SwanLabTracker(run=object())
+        recorded = []
+        tracker.log = lambda metrics: recorded.append(metrics)
+
+        tracker.log_grounding(
+            "train",
+            {"loss": 1.0, "ga_sn_loss": 0.5},
+            view="img",
+        )
+
+        self.assertEqual(
+            recorded,
+            [{
+                "train/grounding/img/total": 1.0,
+                "train/grounding/img/ga-sn": 0.5,
+            }],
         )
 
     def test_trainer_stage_is_explicit_at_evaluation_boundary(self):
