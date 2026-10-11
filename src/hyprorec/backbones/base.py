@@ -73,7 +73,10 @@ class BackboneAdapter:
     @classmethod
     def load_tokenizer(cls, name_or_path: str) -> PreTrainedTokenizerBase:
         try:
-            return AutoTokenizer.from_pretrained(name_or_path)
+            return AutoTokenizer.from_pretrained(
+                name_or_path,
+                trust_remote_code=True,
+            )
         except ValueError:
             return AutoTokenizer.from_pretrained(name_or_path, trust_remote_code=True)
 
@@ -258,6 +261,7 @@ class InteractiveOmniAdapter(BackboneAdapter):
             torch_dtype="auto",
             low_cpu_mem_usage=True,
             trust_remote_code=True,
+            attn_implementation="eager",
         )
 
     @classmethod
