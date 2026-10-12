@@ -17,7 +17,7 @@ from ..evaluation import build_compute_metrics
 from ..model_factory import build_model, load_modality_tables
 from ..processing_hocrs import HoCRSProcessor
 from ..provenance import save_provenance
-from ..training import FourValidChecksCallback, HyProRecTrainer, validation_steps
+from ..training import HyProRecTrainer, TwoValidChecksCallback, validation_steps
 from ..tracking import SwanLabTracker
 
 
@@ -35,7 +35,7 @@ def _dataset_config(data_args, table_path, *, training):
 
 
 def _configure_step_schedule(trainer, training_args):
-    """Schedule four validation/checkpoint checks per training epoch."""
+    """Schedule midpoint and end validation/checkpoint checks per epoch."""
 
     batches = len(trainer.get_train_dataloader())
     updates = max(1, math.ceil(batches / max(1, training_args.gradient_accumulation_steps)))
@@ -54,7 +54,7 @@ def _configure_step_schedule(trainer, training_args):
     training_args.load_best_model_at_end = True
     training_args.metric_for_best_model = "eval_loss"
     training_args.greater_is_better = False
-    trainer.add_callback(FourValidChecksCallback(steps))
+    trainer.add_callback(TwoValidChecksCallback(steps))
 
 
 def main() -> None:

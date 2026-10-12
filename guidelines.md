@@ -292,7 +292,7 @@ AttnPooling/{view}-{source_view}-hypergraph-mass
 RecRouter/{view}
 ```
 
-每个 CRS epoch 进行四次 eval，验证点为该 epoch optimizer update 数的四等分位置，并包含 epoch 结束点。只保留 last checkpoint 和 eval 总 loss 最小的 best checkpoint。训练结束后加载 best checkpoint，重新执行一次 eval 和 test；对话指标使用 teacher forcing。Grounding 每个 epoch 结束时验证一次。
+每个 CRS epoch 进行两次 eval，验证点为该 epoch optimizer update 数的中点和末点。只保留 last checkpoint 和 eval 总 loss 最小的 best checkpoint。训练结束后加载 best checkpoint，重新执行一次 eval 和 test；对话指标使用 teacher forcing。Grounding 每个 epoch 结束时验证一次。训练阶段只记录优化所需的 loss；attention、GraphMoE 和 recommendation-router 辅助指标仅在 eval/test 阶段计算和记录。
 
 ## 3. 训练和推理速度研究
 
@@ -304,8 +304,8 @@ RecRouter/{view}
 2. 每个样本、每个视图重复构造局部超图；
 3. GraphTokenMoE 中逐 expert 的 Python 循环；
 4. 每次 forward 请求完整 hidden states；
-5. 冻结 backbone 仍启用 gradient checkpointing 的收益与代价；
-6. 每个训练 step 计算 attention 和 GraphMoE 诊断指标；
+5. 冻结 backbone 仍启用 gradient checkpointing 的收益与代价；3B CRS 默认关闭，只有显存不足时才重新开启；
+6. 每个训练 step 计算 attention 和 GraphMoE 诊断指标；训练阶段默认关闭，eval/test 阶段保留；
 7. generation 中重复注入图 token、未复用 past key values；
 8. 评估中保存完整 vocabulary logits 和重复解码；
 9. 全目录物品表的重复投影和数据搬运。
@@ -333,7 +333,7 @@ LAB 上优先复用 `$HF_HOME` 已有模型缓存，不重复下载权重。五�
 3. **R2 Grounding**：删除共现图入口和遗留合并脚本；逐模态训练、验证并保存最佳塔；checkpoint 必须能被 CRS 逐塔恢复，验证日志只包含四项 grounding loss。
 4. **R3 Backbone adapter**：先实现统一 tokenizer、embedding、decoder hidden、LM logits 和 generation-cache 接口，再逐个接入五类 backbone；每个 adapter 先通过 config/tokenizer/forward/generation 四级 smoke，再允许进入训练脚本。
 5. **R4 CRS 主路径**：固定 grounding 与 backbone，按四模态超图 token → MoE → backbone → AttnPooling → 全目录评分 → router/LM 的顺序重构；训练路径不保留 BPR、balance、co 或旧推荐头的参数、分支和日志。
-6. **R5 训练与记录**：支持普通 DDP 和 HSDP；以 optimizer update 为单位切分每 epoch 的四次 eval；只保留 best/last；训练后重新跑 best-eval 与 test；SwanLab 的主指标和辅助指标严格按本文件 panel 命名。
+6. **R5 训练与记录**：支持普通 DDP 和 HSDP；以 optimizer update 为单位切分每 epoch 的两次 eval；CRS 默认关闭 gradient checkpointing、关闭 DDP unused-parameter 搜索，DataLoader 使用多 worker 和 pinned memory；只保留 best/last；训练后重新跑 best-eval 与 test；SwanLab 的主指标和辅助指标严格按本文件 panel 命名。
 7. **R6 性能实验**：为 tokenization、局部超图、MoE、hidden-state、checkpoint、diagnostics、generation cache 和全目录投影分别记录局部 benchmark；再做固定小数据端到端对比，只有指标、显存和 generation latency 均满足约束时才保留优化。
 8. **R7 验收与部署**：依次执行本地单测/compile、grounding 单 batch、CRS 单 batch、backbone smoke、固定回归、完整 eval/test 和速度报告；将通过验证的 commit 用 bundle 同步到 LAB worktree，并记录软链、模型路径和运行命令。
 

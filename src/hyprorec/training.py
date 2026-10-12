@@ -38,7 +38,7 @@ class StageAwareTrainerMixin:
 
 
 def validation_steps(updates_per_epoch: int, total_steps: int) -> tuple[int, ...]:
-    """Return up to four evenly spaced optimizer steps for each epoch."""
+    """Return midpoint and end optimizer steps for each training epoch."""
 
     if updates_per_epoch < 1 or total_steps < 1:
         return ()
@@ -46,15 +46,15 @@ def validation_steps(updates_per_epoch: int, total_steps: int) -> tuple[int, ...
     steps = []
     for epoch_start in range(0, total_steps, updates_per_epoch):
         epoch_steps = min(updates_per_epoch, total_steps - epoch_start)
-        for quarter in range(1, 5):
-            step = epoch_start + math.ceil(epoch_steps * quarter / 4)
+        for fraction in (0.5, 1.0):
+            step = epoch_start + math.ceil(epoch_steps * fraction)
             if step not in steps:
                 steps.append(step)
     return tuple(steps)
 
 
-class FourValidChecksCallback(TrainerCallback):
-    """Request evaluation and checkpointing at the four scheduled steps."""
+class TwoValidChecksCallback(TrainerCallback):
+    """Request evaluation and checkpointing at the two scheduled steps."""
 
     def __init__(self, steps: tuple[int, ...]):
         self.steps = frozenset(steps)
@@ -173,10 +173,11 @@ class HyProRecTrainer(StageAwareTrainerMixin, Trainer):
             field = "total" if name == "loss" else name.removesuffix("_loss")
             self._record(f"loss/{field}", getattr(outputs, name, None))
 
-        collect_auxiliary = (
-            not model.training
-            or self.state.global_step % max(1, self.args.logging_steps) == 0
-        )
+        # Attention and routing summaries scan token masks and are useful for
+        # diagnosis, but they do not affect optimization.  Collect them only
+        # during evaluation so gradient accumulation does not repeat that work
+        # for every training micro-step.
+        collect_auxiliary = not model.training
         route = getattr(outputs, "route_weights", None)
         if route is not None and collect_auxiliary:
             route = route.float()
@@ -238,7 +239,7 @@ class HyProRecTrainer(StageAwareTrainerMixin, Trainer):
 
 
 __all__ = [
-    "FourValidChecksCallback",
+    "TwoValidChecksCallback",
     "HyProRecTrainer",
     "StageAwareTrainerMixin",
     "canonical_stage_logs",

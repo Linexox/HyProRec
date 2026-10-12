@@ -19,7 +19,7 @@ data:
   khop: 2
 
 training:
-  output_dir: outputs/tg_redial/hocrs/grounding-semantic
+  output_dir: outputs/tg_redial/grounding-semantic
   do_train: true
   do_eval: true
   per_device_train_batch_size: 8

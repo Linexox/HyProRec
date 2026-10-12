@@ -6,16 +6,18 @@ model:
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
-  grounding_checkpoint_path: outputs/redial/hocrs/grounding-semantic
+  grounding_checkpoint_path: outputs/tg_redial/grounding-semantic/20261011T161435Z
   item_table_view: full
   recommendation_hidden_dim: 2048
   recommendation_attention_dim: 256
   recommendation_temperature: 0.07
   recommendation_view_loss_weight: 0.2
-  conversation_loss_weight: 0.1
+  conversation_loss_weight: 0.3
+  recommendation_router_hidden_dim: 512
+
 data:
-  dataset_path: data/hyprorec-redial
-  hyperedge_table_path: data/hyprorec-redial/hyperedge_table.json
+  dataset_path: data/hyprorec-tg-redial
+  hyperedge_table_path: data/hyprorec-tg-redial/hyperedge_table.json
   embeddings_dir_name: embeddings
   views: [txt, img, ado, vdo]
   topk: 3
@@ -25,8 +27,9 @@ data:
   max_hypergraph_nodes: 64
   max_history_tokens: 256
   max_sequence_tokens: 1024
+
 training:
-  output_dir: outputs/redial/hocrs/full-lambda-0p1
+  output_dir: outputs/tg_redial/full-lambda-0p3
   do_train: true
   do_eval: true
   do_predict: true
@@ -39,9 +42,11 @@ training:
   lr_scheduler_type: cosine
   warmup_ratio: 0.05
   bf16: true
-  gradient_checkpointing: true
-  gradient_checkpointing_kwargs: {use_reentrant: false}
-  ddp_find_unused_parameters: true
+  gradient_checkpointing: false
+  ddp_find_unused_parameters: false
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  dataloader_persistent_workers: false
   eval_strategy: steps
   eval_steps: 200
   save_strategy: steps
@@ -53,6 +58,6 @@ training:
   logging_strategy: steps
   logging_steps: 20
   report_to: []
-  run_name: full-lambda-0p1
+  run_name: full-lambda-0p3
   seed: 42
   data_seed: 42
