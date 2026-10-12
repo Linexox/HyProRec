@@ -25,8 +25,17 @@ configs=(
   full-lambda-1p0
   full-lambda-3p0
 )
+start_dataset="${START_DATASET:-${datasets[0]}}"
+start_config="${START_CONFIG:-${configs[0]}}"
+started=false
 for dataset in "${datasets[@]}"; do
   for config in "${configs[@]}"; do
+    if [[ "$started" == false ]]; then
+      if [[ "$dataset" != "$start_dataset" || "$config" != "$start_config" ]]; then
+        continue
+      fi
+      started=true
+    fi
     # Generate the time ID here; the editable YAML owns the experiment name.
     output=$("$PYTHON_BIN" - "configs/$dataset/$config.yaml" "$dataset" <<'PY'
 import sys
@@ -69,4 +78,8 @@ PY
     [[ "$result" -eq 0 ]] || exit "$result"
   done
 done
+[[ "$started" == true ]] || {
+  echo "Unknown queue start: ${start_dataset}/${start_config}" >&2
+  exit 2
+}
 echo 'Lambda queue complete. Review validation metrics before configuring eta.'
