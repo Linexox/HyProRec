@@ -70,6 +70,34 @@ class _FakeProcessor:
 
 
 class CollatorCacheTest(unittest.TestCase):
+    def test_collator_keeps_empty_graph_branch_for_configured_view(self):
+        tokenizer = _FakeTokenizer()
+        processor = _FakeProcessor(tokenizer)
+        processor.get_token_id_map = lambda: {
+            "soft_prompt_token_id": 3,
+            "graph_start_token_ids": {"txt": 6},
+            "graph_end_token_ids": {"txt": 7},
+            "node_token_id": 4,
+            "hyperedge_token_id": 5,
+        }
+        collator = HoCRSDataCollator(processor, views=("txt",))
+        sample = {
+            "context": "",
+            "response": "response",
+            "role": "assistant",
+            "target_item_id": 0,
+            "hypergraphs": {},
+        }
+
+        batch = collator([sample])
+
+        self.assertIn("txt", batch["hypergraphs"])
+        self.assertEqual(batch["hypergraphs"]["txt"]["node_ids"].numel(), 0)
+        self.assertEqual(
+            batch["hypergraphs"]["txt"]["edge_ptr"].tolist(),
+            [0, 0],
+        )
+
     def test_repeated_sample_reuses_prompt_and_response_tokens(self):
         tokenizer = _FakeTokenizer()
         collator = HoCRSDataCollator(_FakeProcessor(tokenizer))

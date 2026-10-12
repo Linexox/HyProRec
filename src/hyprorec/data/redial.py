@@ -123,10 +123,12 @@ class HoCRSDataCollator:
         max_history_tokens: int = 256,
         max_sequence_tokens: int = 1024,
         cache_size: int = 8192,
+        views: tuple[str, ...] | None = None,
     ) -> None:
         self.processor = processor
         self.max_history_tokens = max_history_tokens
         self.max_sequence_tokens = max_sequence_tokens
+        self.views = views
         tokenizer = processor.tokenizer
         self.cache_size = cache_size
         self._history_cache = OrderedDict()
@@ -176,9 +178,15 @@ class HoCRSDataCollator:
                 ][-self.max_history_tokens :]
                 context = tokenizer.decode(history, skip_special_tokens=False)
                 self._cache_put(self._history_cache, sample["context"], context)
+            views = self.views or tuple(sample["hypergraphs"])
             sizes = {
-                view: (graph.num_nodes, graph.num_hyperedges)
-                for view, graph in sample["hypergraphs"].items()
+                view: (
+                    sample["hypergraphs"][view].num_nodes,
+                    sample["hypergraphs"][view].num_hyperedges,
+                )
+                if view in sample["hypergraphs"]
+                else (0, 0)
+                for view in views
             }
             prompt_key = (context, tuple(sizes.items()), sample["role"])
             prompt_ids = self._cache_get(self._prompt_cache, prompt_key)
@@ -204,13 +212,17 @@ class HoCRSDataCollator:
             )
         token_ids = self.processor.get_token_id_map()
         hypergraphs = {}
-        for view in dict.fromkeys(
-            view for sample in features for view in sample["hypergraphs"]
-        ):
+        views = self.views or tuple(
+            dict.fromkeys(
+                view for sample in features for view in sample["hypergraphs"]
+            )
+        )
+        for view in views:
             rows = [sample["hypergraphs"].get(view) for sample in features]
-            graphs = [graph for graph in rows if graph is not None]
-            if not graphs:
-                continue
+            graphs = [
+                graph or HypergraphData.from_hyperedges(view, ())
+                for graph in rows
+            ]
             graph = batch_hypergraphs(graphs)
             graph["node_positions"] = self._positions(
                 input_ids,

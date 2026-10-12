@@ -118,6 +118,7 @@ def main() -> None:
             processor,
             data_args.max_history_tokens,
             data_args.max_sequence_tokens,
+            views=tuple(data_args.views),
         ),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
