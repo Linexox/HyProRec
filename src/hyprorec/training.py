@@ -23,6 +23,17 @@ class StageAwareTrainerMixin:
         self._metric_stage = "train"
         super().__init__(*args, **kwargs)
 
+    def _save_checkpoint(self, model, trial):
+        super()._save_checkpoint(model, trial)
+        if self.args.world_size > 1:
+            # The writer owns checkpoint publication. Filesystem visibility
+            # must not make ranks take different best-model restore paths.
+            selected = [self.state.best_model_checkpoint]
+            torch.distributed.broadcast_object_list(
+                selected, src=0, device=self.args.device
+            )
+            self.state.best_model_checkpoint = selected[0]
+
     @contextmanager
     def metric_stage(self, stage):
         previous = self._metric_stage

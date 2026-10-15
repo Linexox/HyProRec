@@ -1,5 +1,5 @@
 model:
-  grounding_tokenizer_name_or_path: /data2/lhf/.MODEL/all-mpnet-base-v2
+  grounding_tokenizer_name_or_path: /data2/lhf/.MODEL/bge-base-zh-v1.5
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
@@ -11,8 +11,8 @@ model:
 
 data:
   dataset_path: data/hyprorec-tg-redial
-  hyperedge_table_path: data/hyprorec-tg-redial/hyperedge_table.json
-  embeddings_dir_name: embeddings
+  hyperedge_table_path: data/hyprorec-tg-redial/feature_versions/clap-xclip-20261013T170344Z/hyperedge_table.json
+  embeddings_dir_name: feature_versions/clap-xclip-20261013T170344Z/embeddings
   views: [txt, img, ado, vdo]
   grounding_views: [txt, img, ado, vdo]
   topk: 3
@@ -41,6 +41,11 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   save_total_limit: 2
+  dataloader_num_workers: 4
+  dataloader_pin_memory: false
+  dataloader_persistent_workers: false
+  dataloader_prefetch_factor: 1
+  gradient_checkpointing: false
   remove_unused_columns: false
   report_to: []
   run_name: tg-redial-grounding-semantic

@@ -66,10 +66,12 @@ class HoCRSGroundingCollator:
         views: Sequence[str],
         source_dataset: GroundingSourceDataset,
         tokenizer=None,
+        text_max_length: int = 64,
     ) -> None:
         self.feature_tables = feature_tables
         self.views = tuple(views)
         self.source_dataset = source_dataset
+        self.text_max_length = text_max_length
         if tokenizer is not None:
             self.tokenizer = tokenizer
 
@@ -97,6 +99,8 @@ class HoCRSGroundingCollator:
                     self.tokenizer(
                         values,
                         padding=True,
+                        truncation=True,
+                        max_length=self.text_max_length,
                         return_tensors="pt",
                     )
                 )

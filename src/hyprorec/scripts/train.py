@@ -123,7 +123,7 @@ def main() -> None:
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=processor,
-        compute_metrics=build_compute_metrics(tokenizer),
+        compute_metrics=build_compute_metrics(tokenizer, data_args.metric_tokenization),
         attention_token_ids=processor.get_token_id_map(),
         swanlab_tracker=tracker,
     )

@@ -61,6 +61,7 @@ class DataArguments:
     dataset_path: str = "data/hyprorec-redial"
     hyperedge_table_path: str | None = None
     embeddings_dir_name: str = "embeddings"
+    metric_tokenization: str = "whitespace"
     views: list[str] = field(default_factory=lambda: list(ALL_GRAPH_VIEWS))
     grounding_views: list[str] | None = None
     topk: int = 3
@@ -72,6 +73,8 @@ class DataArguments:
     max_sequence_tokens: int = 1024
 
     def __post_init__(self) -> None:
+        if self.metric_tokenization not in {"whitespace", "jieba"}:
+            raise ValueError("metric_tokenization must be whitespace or jieba.")
         self.views = list(dict.fromkeys(self.views))
         if set(self.views) - set(ALL_GRAPH_VIEWS):
             raise ValueError(f"Unknown or duplicated graph views: {self.views}")

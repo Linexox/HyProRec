@@ -6,22 +6,34 @@ import math
 from collections import Counter
 from collections.abc import Sequence
 
-def _tokens(text: str) -> list[str]:
-    return str(text).strip().split()
+import jieba
+
+
+def _tokens(text: str, metric_tokenization: str) -> list[str]:
+    if metric_tokenization == "whitespace":
+        return str(text).strip().split()
+    if metric_tokenization == "jieba":
+        return [
+            token for token in jieba.lcut(str(text), cut_all=False, HMM=True)
+            if token.strip()
+        ]
+    raise ValueError("metric_tokenization must be whitespace or jieba.")
 
 
 def _ngrams(tokens: Sequence[str], n: int) -> list[tuple[str, ...]]:
     return [tuple(tokens[index : index + n]) for index in range(len(tokens) - n + 1)]
 
 
-def _bleu(references: Sequence[str], hypotheses: Sequence[str], n: int) -> float:
+def _bleu(
+    references: Sequence[Sequence[str]],
+    hypotheses: Sequence[Sequence[str]],
+    n: int,
+) -> float:
     clipped = [0] * n
     total = [0] * n
     reference_length = 0
     hypothesis_length = 0
-    for reference, hypothesis in zip(references, hypotheses):
-        reference_tokens = _tokens(reference)
-        hypothesis_tokens = _tokens(hypothesis)
+    for reference_tokens, hypothesis_tokens in zip(references, hypotheses):
         reference_length += len(reference_tokens)
         hypothesis_length += len(hypothesis_tokens)
         for order in range(1, n + 1):
@@ -51,8 +63,8 @@ def _bleu(references: Sequence[str], hypotheses: Sequence[str], n: int) -> float
     )
 
 
-def _distinct(hypotheses: Sequence[str], n: int) -> float:
-    grams = [gram for text in hypotheses for gram in _ngrams(_tokens(text), n)]
+def _distinct(hypotheses: Sequence[Sequence[str]], n: int) -> float:
+    grams = [gram for tokens in hypotheses for gram in _ngrams(tokens, n)]
     return len(set(grams)) / len(grams) if grams else 0.0
 
 
@@ -61,13 +73,17 @@ def recommendation_metrics(
     targets: Sequence[int],
 ) -> dict[str, float]:
     ranks = [
-        list(ranking).index(target) if target in ranking else math.inf
+        list(ranking).index(target)
+        if target in ranking
+        else math.inf
         for ranking, target in zip(recommendations, targets)
     ]
     metrics: dict[str, float] = {}
     for k in (1, 10, 50):
         metrics[f"recall@{k}"] = (
-            sum(rank < k for rank in ranks) / len(ranks) if ranks else 0.0
+            sum(rank < k for rank in ranks) / len(ranks)
+            if ranks
+            else 0.0
         )
         metrics[f"mrr@{k}"] = (
             sum(1.0 / (rank + 1) for rank in ranks if rank < k) / len(ranks)
@@ -97,10 +113,10 @@ def conversation_teacher_forcing_texts(
     for predicted, target in zip(token_predictions, shifted_labels):
         mask = target != -100
         token_count += int(mask.sum())
-        references.append(tokenizer.decode(target[mask].tolist(), skip_special_tokens=True))
-        hypotheses.append(
-            tokenizer.decode(predicted[mask].tolist(), skip_special_tokens=True)
-        )
+        reference = tokenizer.decode(target[mask].tolist(), skip_special_tokens=True)
+        hypothesis = tokenizer.decode(predicted[mask].tolist(), skip_special_tokens=True)
+        references.append(reference)
+        hypotheses.append(hypothesis)
     return references, hypotheses, token_count
 
 
@@ -108,27 +124,37 @@ def conversation_teacher_forcing_metrics(
     logits,
     labels,
     tokenizer,
+    metric_tokenization: str = "whitespace",
 ) -> dict[str, float]:
     """Compute response metrics from teacher-forced next-token logits."""
 
     references, hypotheses, token_count = conversation_teacher_forcing_texts(
         logits, labels, tokenizer
     )
-    metrics = {
-        f"bleu@{n}": _bleu(references, hypotheses, n) for n in range(1, 5)
-    }
-    metrics.update({f"dist@{n}": _distinct(hypotheses, n) for n in range(1, 5)})
+    metrics = conversation_teacher_forcing_metrics_from_texts(
+        references, hypotheses, metric_tokenization
+    )
     metrics["response_tokens"] = float(token_count)
     return metrics
 
 
 def conversation_teacher_forcing_metrics_from_texts(
-    references: Sequence[str], hypotheses: Sequence[str]
+    references: Sequence[str],
+    hypotheses: Sequence[str],
+    metric_tokenization: str = "whitespace",
 ) -> dict[str, float]:
-    """Compute response metrics after aggregating decoded split outputs."""
-
-    metrics = {f"bleu@{n}": _bleu(references, hypotheses, n) for n in range(1, 5)}
-    metrics.update({f"dist@{n}": _distinct(hypotheses, n) for n in range(1, 5)})
+    """Compute word metrics from decoded texts without special tokens."""
+    reference_tokens = [_tokens(text, metric_tokenization) for text in references]
+    hypothesis_tokens = [_tokens(text, metric_tokenization) for text in hypotheses]
+    metrics = {}
+    metrics.update({
+        f"bleu@{n}": _bleu(reference_tokens, hypothesis_tokens, n)
+        for n in range(1, 5)
+    })
+    metrics.update({
+        f"dist@{n}": _distinct(hypothesis_tokens, n)
+        for n in range(1, 5)
+    })
     return metrics
 
 

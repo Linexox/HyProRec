@@ -6,7 +6,7 @@ model:
   hypergraph_hidden_dim: 1024
   hypergraph_output_dim: 256
   hypergraph_num_layers: 3
-  grounding_checkpoint_path: outputs/redial/grounding-semantic
+  grounding_checkpoint_path: outputs/redial/grounding-semantic/20261013T170344Z
   item_table_view: img
   recommendation_hidden_dim: 2048
   recommendation_attention_dim: 256
@@ -15,8 +15,9 @@ model:
   conversation_loss_weight: 1.0
 data:
   dataset_path: data/hyprorec-redial
-  hyperedge_table_path: data/hyprorec-redial/hyperedge_table.json
-  embeddings_dir_name: embeddings
+  hyperedge_table_path: data/hyprorec-redial/feature_versions/clap-xclip-20261013T170344Z/hyperedge_table.json
+  embeddings_dir_name: feature_versions/clap-xclip-20261013T170344Z/embeddings
+  metric_tokenization: whitespace
   views: [img]
   topk: 3
   khop: 2

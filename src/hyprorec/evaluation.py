@@ -10,7 +10,7 @@ from .metrics import (
 )
 
 
-def build_compute_metrics(tokenizer):
+def build_compute_metrics(tokenizer, metric_tokenization: str = "whitespace"):
     """Build metrics for recommendation and teacher-forced response logits."""
 
     def compute_metrics(prediction: EvalPrediction) -> dict[str, float]:
@@ -37,7 +37,9 @@ def build_compute_metrics(tokenizer):
                 )
             )
         metrics.update(
-            conversation_teacher_forcing_metrics_from_texts(references, hypotheses)
+            conversation_teacher_forcing_metrics_from_texts(
+                references, hypotheses, metric_tokenization
+            )
         )
         metrics["response_tokens"] = float(response_tokens)
         return metrics

@@ -11,8 +11,8 @@ model:
 
 data:
   dataset_path: data/hyprorec-redial
-  hyperedge_table_path: data/hyprorec-redial/hyperedge_table.json
-  embeddings_dir_name: embeddings
+  hyperedge_table_path: data/hyprorec-redial/feature_versions/clap-xclip-20261013T170344Z/hyperedge_table.json
+  embeddings_dir_name: feature_versions/clap-xclip-20261013T170344Z/embeddings
   views: [txt, img, ado, vdo, ]
   topk: 3
   khop: 2
@@ -40,6 +40,11 @@ training:
   metric_for_best_model: eval_loss
   greater_is_better: false
   save_total_limit: 2
+  dataloader_num_workers: 4
+  dataloader_pin_memory: false
+  dataloader_persistent_workers: false
+  dataloader_prefetch_factor: 1
+  gradient_checkpointing: false
   remove_unused_columns: false
   report_to: []
   run_name: hocrs-grounding-semantic

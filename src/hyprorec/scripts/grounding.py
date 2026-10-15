@@ -10,7 +10,8 @@ from pathlib import Path
 
 import torch
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, EarlyStoppingCallback, Trainer, set_seed
+from transformers import AutoConfig, AutoTokenizer, EarlyStoppingCallback, Trainer, set_seed
+from transformers.trainer_utils import get_last_checkpoint
 
 from ..arguments import DataArguments, ModelArguments
 from ..config import parse_experiment_args
@@ -175,13 +176,22 @@ def main() -> None:
         view_config = copy.deepcopy(config)
         view_config.views = (view,)
         tokenizer = None
+        text_max_length = 64
         source_view = view
         if source_view == "txt":
             tokenizer = AutoTokenizer.from_pretrained(
                 model_args.grounding_tokenizer_name_or_path
             )
-            source_config = build_source_config(view)
+            source_config = build_source_config(
+                view,
+                text_config=AutoConfig.from_pretrained(
+                    model_args.grounding_tokenizer_name_or_path
+                ),
+            )
             source_config.vocab_size = len(tokenizer)
+            text_max_length = source_config.max_position_embeddings
+            if source_config.model_type == "mpnet":
+                text_max_length -= tokenizer.pad_token_id + 1
             view_config.source_configs[view] = source_config.to_dict()
         source_dataset = GroundingSourceDataset(data_args.dataset_path, (source_view,))
         if not source_dataset.has_raw_modality(source_view):
@@ -217,6 +227,7 @@ def main() -> None:
                 (view,),
                 source_dataset,
                 tokenizer,
+                text_max_length=text_max_length,
             ),
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
@@ -224,9 +235,10 @@ def main() -> None:
             swanlab_tracker=tracker,
             grounding_view=view,
         )
-        result = trainer.train(
-            resume_from_checkpoint=training_args.resume_from_checkpoint
-        )
+        checkpoint = training_args.resume_from_checkpoint
+        if checkpoint is None and Path(args.output_dir).is_dir():
+            checkpoint = get_last_checkpoint(args.output_dir)
+        result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Trainer has restored this modality's minimum-eval-loss model.
         trainer.save_state()
         trainer.save_metrics("train", result.metrics)

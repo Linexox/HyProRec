@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 
 import torch
@@ -24,7 +25,7 @@ from .losses import multi_positive_contrastive_loss
 from .modeling_hocrs import HypergraphEncoder
 
 
-def build_source_config(view: str):
+def build_source_config(view: str, text_config=None):
     common = dict(
         hidden_size=256,
         num_hidden_layers=4,
@@ -32,6 +33,12 @@ def build_source_config(view: str):
         intermediate_size=1024,
     )
     if view == "txt":
+        if text_config is not None:
+            config = deepcopy(text_config)
+            for name, value in common.items():
+                setattr(config, name, value)
+            config.max_position_embeddings = 64
+            return config
         return MPNetConfig(**common, max_position_embeddings=64)
     if view == "img":
         return ViTConfig(**common, image_size=224, patch_size=16, num_channels=3)
