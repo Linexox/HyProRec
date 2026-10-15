@@ -98,12 +98,22 @@ class HyProRecTrainer(StageAwareTrainerMixin, Trainer):
         self._diagnostic_sum = {}
         self._diagnostic_count = {}
 
-    def _record(self, key, value):
+    @contextmanager
+    def metric_stage(self, stage):
+        previous = self._diagnostic_sum, self._diagnostic_count
+        self._diagnostic_sum, self._diagnostic_count = {}, {}
+        try:
+            with super().metric_stage(stage):
+                yield
+        finally:
+            self._diagnostic_sum, self._diagnostic_count = previous
+
+    def _record(self, key, value, weight=1):
         value = _as_float(value)
         if value is None or not math.isfinite(value):
             return
-        self._diagnostic_sum[key] = self._diagnostic_sum.get(key, 0.0) + value
-        self._diagnostic_count[key] = self._diagnostic_count.get(key, 0) + 1
+        self._diagnostic_sum[key] = self._diagnostic_sum.get(key, 0.0) + value * weight
+        self._diagnostic_count[key] = self._diagnostic_count.get(key, 0) + weight
 
     @staticmethod
     def _unwrapped(model):
@@ -175,14 +185,10 @@ class HyProRecTrainer(StageAwareTrainerMixin, Trainer):
                 )
 
     def _collect_diagnostics(self, outputs, inputs, model):
-        for name in (
-            "loss",
-            "fusion_loss",
-            "view_loss",
-            "conversation_loss",
-        ):
-            field = "total" if name == "loss" else name.removesuffix("_loss")
-            self._record(f"loss/{field}", getattr(outputs, name, None))
+        if model.training:
+            for name in ("loss", "fusion_loss", "view_loss", "conversation_loss"):
+                field = "total" if name == "loss" else name.removesuffix("_loss")
+                self._record(f"loss/{field}", getattr(outputs, name, None))
 
         # Attention and routing summaries scan token masks and are useful for
         # diagnosis, but they do not affect optimization.  Collect them only
@@ -215,6 +221,19 @@ class HyProRecTrainer(StageAwareTrainerMixin, Trainer):
         with torch.no_grad():
             loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
         loss = loss.detach().mean()
+        fields = {
+            name: getattr(outputs, name, None)
+            for name in ("fusion_loss", "view_loss", "conversation_loss")
+            if getattr(outputs, name, None) is not None
+        }
+        if fields:
+            # Match Trainer's sample-weighted loss reduction, including removal
+            # of the examples Accelerate repeats to pad the final DDP batch.
+            values = torch.stack([value.detach().float() for value in fields.values()])
+            values = values.unsqueeze(0).expand(inputs["input_ids"].size(0), -1)
+            values = self.accelerator.gather_for_metrics(values)
+            for name, value in zip(fields, values.mean(dim=0)):
+                self._record(f"loss/{name.removesuffix('_loss')}", value, values.size(0))
         if prediction_loss_only:
             return loss, None, None
         recommendations = outputs.recommendation_logits.topk(
@@ -224,6 +243,16 @@ class HyProRecTrainer(StageAwareTrainerMixin, Trainer):
         labels = (inputs["labels"].detach(), inputs["rec_labels"].detach())
         return loss, (recommendations.detach(), conversation_predictions.detach()), labels
 
+    def evaluation_loop(self, *args, metric_key_prefix="eval", **kwargs):
+        output = super().evaluation_loop(*args, metric_key_prefix=metric_key_prefix, **kwargs)
+        for key, total in self._diagnostic_sum.items():
+            if key.startswith("loss/"):
+                output.metrics[f"{metric_key_prefix}_{key}"] = total / self._diagnostic_count[key]
+        native_loss = output.metrics.get(f"{metric_key_prefix}_loss")
+        if native_loss is not None:
+            output.metrics[f"{metric_key_prefix}_loss/total"] = native_loss
+        return output
+
     def predict(self, *args, **kwargs):
         with self.metric_stage("test"):
             output = super().predict(*args, **kwargs)
@@ -232,16 +261,27 @@ class HyProRecTrainer(StageAwareTrainerMixin, Trainer):
 
     def log(self, logs, *args, stage=None, **kwargs):
         logs = dict(logs)
+        metric_stage = stage or self._metric_stage
         if "learning_rate" in logs:
             logs["optimization/learning_rate"] = logs["learning_rate"]
         if "grad_norm" in logs:
             logs["optimization/grad_norm"] = logs["grad_norm"]
+        if metric_stage == "train" and self.args.world_size > 1:
+            names = [f"loss/{name}" for name in ("total", "fusion", "view", "conversation")]
+            statistics = torch.tensor(
+                [[self._diagnostic_sum.get(key, 0.0), self._diagnostic_count.get(key, 0)]
+                 for key in names], device=self.args.device, dtype=torch.float64,
+            )
+            statistics = self.accelerator.reduce(statistics, reduction="sum").tolist()
+            for key, (total, count) in zip(names, statistics):
+                if count:
+                    self._diagnostic_sum[key], self._diagnostic_count[key] = total, count
         for key, total in self._diagnostic_sum.items():
-            logs[key] = total / max(1, self._diagnostic_count[key])
+            name = key if metric_stage == "train" else f"{metric_stage}_{key}"
+            logs.setdefault(name, total / max(1, self._diagnostic_count[key]))
         self._diagnostic_sum.clear()
         self._diagnostic_count.clear()
         if self.swanlab_tracker is not None and self.is_world_process_zero():
-            metric_stage = stage or self._metric_stage
             self.swanlab_tracker.log_trainer(
                 metric_stage,
                 canonical_stage_logs(metric_stage, logs),
