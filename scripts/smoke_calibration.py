@@ -1,4 +1,4 @@
-"""Six-rank graph/text CRS regression before TG-ReDial eta/LR calibration."""
+"""Distributed graph/text CRS regression before TG-ReDial experiments."""
 import argparse
 import json
 from pathlib import Path
@@ -34,11 +34,12 @@ def main():
         '--config', str(cli.config),
     ])
     _ = args.device
-    if args.world_size != 6:
-        raise ValueError('Calibration smoke requires six ranks.')
+    expected_batches = {2: 256, 6: 258}
+    if args.world_size not in expected_batches:
+        raise ValueError('Calibration smoke requires two or six ranks.')
     effective_batch = args.world_size * args.per_device_train_batch_size * args.gradient_accumulation_steps
-    if effective_batch != 258 or args.per_device_train_batch_size != 1:
-        raise ValueError('Calibration smoke requires per-device batch 1 and effective batch 258.')
+    if effective_batch != expected_batches[args.world_size] or args.per_device_train_batch_size != 1:
+        raise ValueError('Calibration smoke requires per-device batch 1 and the expected effective batch.')
     set_seed(args.seed)
     adapter = load_backbone_adapter(model_args.backbone_name_or_path)
     processor = HoCRSProcessor(adapter.tokenizer, model_args.num_prompt_tokens)

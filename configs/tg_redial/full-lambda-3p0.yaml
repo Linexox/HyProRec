@@ -36,12 +36,13 @@ training:
   do_predict: true
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 32
-  num_train_epochs: 16
-  learning_rate: 0.00005
+  gradient_accumulation_steps: 128
+  num_train_epochs: 24
+  learning_rate: 0.0005
   weight_decay: 0.01
-  lr_scheduler_type: constant_with_warmup
-  warmup_ratio: 0.05
+  lr_scheduler_type: cosine_with_min_lr
+  warmup_steps: 0
+  warmup_ratio: 0.2
   bf16: true
   gradient_checkpointing: false
   ddp_find_unused_parameters: false
@@ -62,3 +63,6 @@ training:
   run_name: full-lambda-3p0
   seed: 42
   data_seed: 42
+  lr_scheduler_kwargs:
+    min_lr_rate: 0.2
+  max_grad_norm: 1.0
