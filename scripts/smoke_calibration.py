@@ -45,6 +45,12 @@ def main():
     processor = HoCRSProcessor(adapter.tokenizer, model_args.num_prompt_tokens)
     tables = load_modality_tables(data_args, model_args)
     model = build_model(model_args, data_args, processor, tables, adapter)
+    signature = [(name, tuple(value.shape), str(value.dtype))
+                 for name, value in model.named_buffers()]
+    signatures = [None] * args.world_size
+    torch.distributed.all_gather_object(signatures, signature)
+    if any(value != signature for value in signatures):
+        raise ValueError('Buffer registration differs across DDP ranks.')
     table = HypergraphTable.from_json(data_args.hyperedge_table_path)
     train = HoCRSDataset(_dataset_config(data_args, data_args.hyperedge_table_path, training=True), 'train', table)
     valid = HoCRSDataset(_dataset_config(data_args, data_args.hyperedge_table_path, training=False), 'validation', table)
@@ -90,6 +96,10 @@ def main():
         injections = [model._inject(probe['input_ids'], probe['hypergraphs']) for _ in range(3)]
         deterministic_delta = max((injections[0] - value).abs().max().item() for value in injections[1:])
     first, second = trainer.evaluate(), trainer.evaluate()
+    for view, reference in tables.items():
+        for name in (f'{view}_feature_table', f'item_{view}_feature_table'):
+            if not torch.equal(getattr(model, name).detach().cpu(), reference):
+                raise ValueError(f'Rank {args.process_index}: DDP changed {name}.')
     for row in [r for r in trainer.state.log_history if 'eval_loss' in r] + [first, second]:
         weighted = (row['eval_loss/fusion']
                     + model_args.recommendation_view_loss_weight * row['eval_loss/view']
@@ -106,6 +116,8 @@ def main():
         (cli.output / 'smoke.json').write_text(json.dumps({
             'passed': True, 'world_size': args.world_size, 'effective_batch_size': effective_batch,
             'checkpoint_restore_passed': True,
+            'buffer_registration_identical': True,
+            'feature_tables_unchanged': True,
             'best_model_checkpoint': trainer.state.best_model_checkpoint,
             'lambda': model_args.conversation_loss_weight,
             'eta': model_args.recommendation_view_loss_weight,

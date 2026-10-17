@@ -353,7 +353,7 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         # ``item_*_feature_table`` buffers below, so the two paths remain
         # independent despite identical initialization values.
         needed.update(config.item_feature_dims)
-        for view in needed:
+        for view in sorted(needed):
             self.register_buffer(
                 f"{view}_feature_table",
                 torch.zeros(config.num_items, config.item_feature_dims[view]),
