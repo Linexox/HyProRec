@@ -59,6 +59,22 @@ def make_trainer(output):
 
 
 class TrainingMetricsTest(unittest.TestCase):
+    def test_fsdp2_autocast_handles_float_features_and_bf16_weights(self):
+        with tempfile.TemporaryDirectory() as output:
+            trainer, _, _ = make_trainer(output)
+            trainer.is_fsdp_enabled = True
+            trainer.args.bf16 = True
+            trainer.use_cpu_amp = False
+            trainer.accelerator.state.fsdp_plugin = SimpleNamespace(fsdp_version=2)
+            layer = torch.nn.Linear(2, 2).to(torch.bfloat16)
+            try:
+                with trainer.compute_loss_context_manager():
+                    result = layer(torch.ones(1, 2))
+                self.assertEqual(result.dtype, torch.bfloat16)
+            finally:
+                trainer.is_fsdp_enabled = False
+                del trainer.accelerator.state.fsdp_plugin
+
     def setUp(self):
         environment = patch.dict(os.environ, {
             "ACCELERATE_USE_FSDP": "false", "ACCELERATE_USE_DEEPSPEED": "false",

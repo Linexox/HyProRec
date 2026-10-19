@@ -23,6 +23,15 @@ class StageAwareTrainerMixin:
         self._metric_stage = "train"
         super().__init__(*args, **kwargs)
 
+    def compute_loss_context_manager(self):
+        # Accelerate FSDP2 casts parameters but does not install native AMP.
+        if (
+            self.is_fsdp_enabled and self.args.bf16
+            and self.accelerator.state.fsdp_plugin.fsdp_version == 2
+        ):
+            return torch.autocast(self.args.device.type, dtype=torch.bfloat16)
+        return super().compute_loss_context_manager()
+
     def _save_checkpoint(self, model, trial):
         super()._save_checkpoint(model, trial)
         if self.args.world_size > 1:
