@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from accelerate import ParallelismConfig
@@ -126,7 +127,7 @@ class HoCRSTrainingArguments(TrainingArguments):
         if self.dp_shard_size > 1:
             if getattr(self, "parallelism_config", None) is not None:
                 raise ValueError("Set mesh dimensions or parallelism_config, not both.")
-            self.fsdp = True
+            self.fsdp = "full_shard auto_wrap"
             self.fsdp_config = self.fsdp_config or {
                 "version": 2,
                 "reshard_after_forward": True,
@@ -137,6 +138,17 @@ class HoCRSTrainingArguments(TrainingArguments):
                 dp_replicate_size=self.dp_replicate_size,
                 dp_shard_size=self.dp_shard_size,
             )
+            # Transformers 4.53 passes FSDP settings to Accelerate through env.
+            os.environ["FSDP_VERSION"] = str(self.fsdp_config.get("version", 2))
+            os.environ["FSDP_RESHARD_AFTER_FORWARD"] = str(
+                self.fsdp_config.get("reshard_after_forward", True)
+            ).lower()
+            os.environ["FSDP_STATE_DICT_TYPE"] = self.fsdp_config.get(
+                "state_dict_type", "FULL_STATE_DICT"
+            )
+            os.environ["ACCELERATE_USE_PARALLELISM_CONFIG"] = "true"
+            os.environ["PARALLELISM_CONFIG_DP_REPLICATE_SIZE"] = str(self.dp_replicate_size)
+            os.environ["PARALLELISM_CONFIG_DP_SHARD_SIZE"] = str(self.dp_shard_size)
         super().__post_init__()
         if self.dp_shard_size == 1 and self.fsdp is None:
             self.fsdp = []
