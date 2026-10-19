@@ -37,6 +37,7 @@ def main():
     args.output_dir = str(cli.output)
     args.max_steps = 2
     args.eval_steps = args.save_steps = 1
+    args.logging_steps = 1
     args.warmup_steps = 0
     args.warmup_ratio = 0.
     args.disable_tqdm = True

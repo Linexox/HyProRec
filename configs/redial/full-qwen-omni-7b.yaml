@@ -63,7 +63,7 @@ training:
   fsdp_config:
     version: 2
     reshard_after_forward: true
-    state_dict_type: FULL_STATE_DICT
+    state_dict_type: SHARDED_STATE_DICT
     transformer_layer_cls_to_wrap:
       - Embedding
       - Qwen2_5OmniDecoderLayer
