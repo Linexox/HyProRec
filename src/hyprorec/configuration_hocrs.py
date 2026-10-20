@@ -61,6 +61,11 @@ def _backbone_config(
         return value
     values = dict(value)
     model_type = values.pop("model_type")
+    if "AutoConfig" in values.get("auto_map", {}):
+        config = AutoConfig.from_pretrained(
+            values["_name_or_path"], trust_remote_code=True
+        )
+        return config.__class__(**values)
     return AutoConfig.for_model(model_type, **values)
 
 
@@ -153,6 +158,10 @@ class HoCRSConfig(PretrainedConfig):
         self.img_hypergraph_config = _graph_config(img_hypergraph_config)
         self.ado_hypergraph_config = _graph_config(ado_hypergraph_config)
         self.vdo_hypergraph_config = _graph_config(vdo_hypergraph_config)
+
+    def to_diff_dict(self) -> dict[str, Any]:
+        """Keep complete nested configs without assuming third-party defaults."""
+        return self.to_dict()
 
     def get_hypergraph_config(self, view: str) -> HoCRSHypergraphConfig:
         return getattr(self, f"{view}_hypergraph_config")
