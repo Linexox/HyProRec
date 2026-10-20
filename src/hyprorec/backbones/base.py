@@ -262,6 +262,12 @@ class QwenOmniAdapter(BackboneAdapter):
 class InteractiveOmniAdapter(BackboneAdapter):
     model_type = "interactiveomni"
 
+    def gradient_checkpointing_enable(self, **kwargs: Any) -> None:
+        self.model.language_model.gradient_checkpointing_enable(**kwargs)
+
+    def gradient_checkpointing_disable(self) -> None:
+        self.model.language_model.gradient_checkpointing_disable()
+
     def _decoder(self) -> nn.Module:
         language_model = getattr(self.model, "language_model", None)
         decoder = getattr(language_model, "model", None)
