@@ -18,11 +18,12 @@ def load_modality_tables(
     data_args: DataArguments, model_args: ModelArguments
 ) -> dict[str, torch.Tensor]:
     graph_views = set(data_args.views)
-    item_views = (
-        set(MODALITIES)
-        if model_args.item_table_view == "full"
-        else {model_args.item_table_view}
-    )
+    if model_args.item_table_view == "full":
+        item_views = set(MODALITIES)
+    elif model_args.item_table_view == "active":
+        item_views = graph_views
+    else:
+        item_views = {model_args.item_table_view}
     needed = graph_views | item_views
     directory = Path(data_args.dataset_path) / data_args.embeddings_dir_name
     return {

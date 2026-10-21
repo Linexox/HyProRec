@@ -120,8 +120,8 @@ class HoCRSConfig(PretrainedConfig):
             raise ValueError("Only the item_table recommendation head is supported.")
         if set(views) - set(ALL_GRAPH_VIEWS):
             raise ValueError(f"views must contain each graph view at most once: {ALL_GRAPH_VIEWS}")
-        if item_table_view not in (*MODALITIES, "full"):
-            raise ValueError("item_table_view must be a modality or full.")
+        if item_table_view not in (*MODALITIES, "full", "active"):
+            raise ValueError("item_table_view must be a modality, full, or active.")
         if (
             num_items < 1
             or recommendation_hidden_dim < 1
@@ -158,6 +158,15 @@ class HoCRSConfig(PretrainedConfig):
         self.img_hypergraph_config = _graph_config(img_hypergraph_config)
         self.ado_hypergraph_config = _graph_config(ado_hypergraph_config)
         self.vdo_hypergraph_config = _graph_config(vdo_hypergraph_config)
+
+    @property
+    def item_views(self) -> tuple[str, ...]:
+        """Resolve recommendation branches in canonical modality order."""
+        if self.item_table_view == "active":
+            return tuple(view for view in self.item_feature_dims if view in self.views)
+        if self.item_table_view == "full":
+            return tuple(self.item_feature_dims)
+        return (self.item_table_view,)
 
     def to_diff_dict(self) -> dict[str, Any]:
         """Keep complete nested configs without assuming third-party defaults."""

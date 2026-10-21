@@ -39,8 +39,8 @@ class ModelArguments:
     def __post_init__(self) -> None:
         if self.recommendation_head != "item_table":
             raise ValueError("Only the item_table recommendation head is supported.")
-        if self.item_table_view not in (*MODALITIES, "full"):
-            raise ValueError("item_table_view must be a modality or full.")
+        if self.item_table_view not in (*MODALITIES, "full", "active"):
+            raise ValueError("item_table_view must be a modality, full, or active.")
         if (
             self.num_prompt_tokens != 20
             or self.recommendation_hidden_dim < 1

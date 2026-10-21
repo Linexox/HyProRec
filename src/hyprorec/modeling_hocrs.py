@@ -189,7 +189,7 @@ class ItemTableHead(nn.Module):
         self.temperature = temperature
         self.view_loss_weight = view_loss_weight
         feature_dims = canonical_feature_dims(feature_dims)
-        names = tuple(feature_dims) if item_view == "full" else (item_view,)
+        names = tuple(feature_dims) if item_view in {"full", "active"} else (item_view,)
         self.names = names
         self.attention_poolers = nn.ModuleDict({
             name: ViewAttentionPooling(input_dim, attention_dim)
@@ -387,14 +387,9 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
                 item_table.copy_(value)
 
     def _feature_tables(self) -> dict[str, torch.Tensor]:
-        names = (
-            self.config.item_feature_dims
-            if self.config.item_table_view == "full"
-            else (self.config.item_table_view,)
-        )
         return {
             name: getattr(self, f"item_{name}_feature_table")
-            for name in names
+            for name in self.config.item_views
         }
 
     def load_grounding_checkpoint(self, path: str) -> None:
@@ -552,7 +547,7 @@ class HoCRSRecommendationModel(HoCRSBaseModel):
         super().__init__(config, backbone, backbone_adapter)
         self.recommendation_head = ItemTableHead(
             self.backbone_adapter.hidden_size,
-            config.item_feature_dims,
+            {view: config.item_feature_dims[view] for view in config.item_views},
             config.item_table_view,
             config.recommendation_hidden_dim,
             config.recommendation_attention_dim,
