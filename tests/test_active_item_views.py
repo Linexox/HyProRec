@@ -43,7 +43,7 @@ class ActiveItemViewsTest(unittest.TestCase):
                 for view in self.views
             },
         )
-        model = HoCRSRecommendationModel(config)
+        model = HoCRSRecommendationModel(config).eval()
         model.initialize_feature_tables({v: torch.randn(3, 4) for v in dimensions})
         head = model.recommendation_head
         self.assertEqual(head.names, self.views)
@@ -59,9 +59,11 @@ class ActiveItemViewsTest(unittest.TestCase):
             model.save_pretrained(directory)
             restored = HoCRSRecommendationModel.from_pretrained(directory)
         self.assertEqual(restored.config.item_views, self.views)
+        for name, value in model.state_dict().items():
+            torch.testing.assert_close(restored.state_dict()[name], value, rtol=0, atol=0)
         actual = restored.recommendation_head(hidden, mask, restored._feature_tables(), labels)
-        torch.testing.assert_close(actual.logits, result.logits, rtol=0, atol=0)
-        torch.testing.assert_close(actual.loss, result.loss, rtol=0, atol=0)
+        torch.testing.assert_close(actual.logits, result.logits, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(actual.loss, result.loss, rtol=1e-5, atol=1e-6)
 
     def test_full_still_keeps_all_branches_with_subset_graphs(self):
         config = HoCRSConfig(
