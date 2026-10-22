@@ -7,13 +7,15 @@ export PYTHONPATH="$PROJECT_ROOT/src"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 IFS=',' read -r -a gpu_ids <<< "$CUDA_VISIBLE_DEVICES"
 num_gpus=${#gpu_ids[@]}
-export TMPDIR="${TMPDIR:-/data2/lhf/tmp/hyprorec-lambda}"
+runtime_dir="$PROJECT_ROOT/.runtime"
+mkdir -p "$runtime_dir/locks"
+export TMPDIR
+TMPDIR=$(mktemp -d "$runtime_dir/job.XXXXXXXX")
 export HF_HUB_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS=1
-mkdir -p "$TMPDIR"
 for gpu in "${gpu_ids[@]}"; do
-  exec {gpu_lock}> "$TMPDIR/gpu-$gpu.lock"
+  exec {gpu_lock}> "$runtime_dir/locks/gpu-$gpu.lock"
   flock -n "$gpu_lock" || { echo "Another lambda job has reserved GPU $gpu."; exit 1; }
 done
 

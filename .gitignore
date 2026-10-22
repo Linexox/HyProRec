@@ -16,6 +16,7 @@ wheels/
 !.env.example
 /data/
 /outputs/
+/.runtime/
 /wandb/
 
 .codex-tmp/
