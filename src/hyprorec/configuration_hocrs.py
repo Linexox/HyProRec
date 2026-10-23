@@ -117,6 +117,8 @@ class HoCRSConfig(PretrainedConfig):
         self.backbone_config = backbone_config
         for name in ("bos_token_id", "eos_token_id", "pad_token_id"):
             kwargs.setdefault(name, getattr(backbone_config, name, None))
+        # The backbone owns its weight tying; the composite must not retie its heads.
+        kwargs["tie_word_embeddings"] = False
         super().__init__(**kwargs)
         views = tuple(dict.fromkeys(views))
         if recommendation_head != "item_table":

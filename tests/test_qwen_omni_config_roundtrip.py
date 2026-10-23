@@ -3,10 +3,12 @@ import json
 import unittest
 
 import torch
+from transformers import GPT2Config
 from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import Qwen2_5OmniThinkerConfig
 
 from hyprorec.backbones.base import ADAPTERS, QwenOmniAdapter
 from hyprorec.configuration_hocrs import HoCRSConfig
+from hyprorec.modeling_hocrs import HoCRSRecommendationModel
 
 
 class QwenOmniConfigRoundtripTest(unittest.TestCase):
@@ -27,6 +29,24 @@ class QwenOmniConfigRoundtripTest(unittest.TestCase):
 
     def test_saved_thinker_selects_omni_adapter(self):
         self.assertIs(ADAPTERS.get('qwen2_5_omni_thinker'), QwenOmniAdapter)
+
+    def test_composite_preserves_an_untied_backbone_even_with_legacy_config(self):
+        config = HoCRSConfig(
+            backbone_config=GPT2Config(n_layer=1, n_head=2, n_embd=16,
+                                      vocab_size=32, tie_word_embeddings=False),
+            views=('txt',), item_feature_dims={'txt': 4},
+            txt_hypergraph_config={'input_dim': 4, 'hidden_dim': 4,
+                                   'output_dim': 4, 'num_layers': 1},
+            recommendation_hidden_dim=8, recommendation_attention_dim=4,
+            recommendation_router_hidden_dim=8, tie_word_embeddings=True,
+        )
+        model = HoCRSRecommendationModel(config)
+        input_weight = model.get_input_embeddings().weight
+        output_weight = model.get_output_embeddings().weight
+        self.assertIsNot(input_weight, output_weight)
+        model.tie_weights()
+        self.assertIs(model.get_input_embeddings().weight, input_weight)
+        self.assertIs(model.get_output_embeddings().weight, output_weight)
 
     def test_distinct_input_and_output_vocabularies_survive_resize_and_reload(self):
         config = Qwen2_5OmniThinkerConfig(
