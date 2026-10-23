@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from transformers import AutoConfig, GPT2Config, PretrainedConfig
+from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import Qwen2_5OmniThinkerConfig
 
 from .constants import GRAPH_VIEWS, MODALITIES
 
@@ -61,6 +62,8 @@ def _backbone_config(
         return value
     values = dict(value)
     model_type = values.pop("model_type")
+    if model_type == "qwen2_5_omni_thinker":
+        return Qwen2_5OmniThinkerConfig(**values)
     if "AutoConfig" in values.get("auto_map", {}):
         config = AutoConfig.from_pretrained(
             values["_name_or_path"], trust_remote_code=True

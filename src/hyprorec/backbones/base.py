@@ -372,6 +372,7 @@ ADAPTERS = {
         LlavaAdapter,
     )
 }
+ADAPTERS["qwen2_5_omni_thinker"] = QwenOmniAdapter
 
 
 def load_backbone_adapter(name_or_path: str) -> BackboneAdapter:
