@@ -241,6 +241,11 @@ class BackboneAdapter:
 class QwenOmniAdapter(BackboneAdapter):
     model_type = "qwen2_5_omni"
 
+    def resize_token_embeddings(self, size: int) -> nn.Module:
+        embeddings = super().resize_token_embeddings(size)
+        self.config.output_vocab_size = self.get_output_embeddings().weight.size(0)
+        return embeddings
+
     @classmethod
     def load_model(cls, name_or_path: str) -> nn.Module:
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
@@ -256,7 +261,11 @@ class QwenOmniAdapter(BackboneAdapter):
         from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 
         thinker_config = _config_value(config, "thinker_config") or config
-        return Qwen2_5OmniThinkerForConditionalGeneration(thinker_config)
+        model = Qwen2_5OmniThinkerForConditionalGeneration(thinker_config)
+        output_size = getattr(thinker_config, "output_vocab_size", model.lm_head.out_features)
+        if output_size != model.lm_head.out_features:
+            model.lm_head = nn.Linear(model.lm_head.in_features, output_size, bias=False)
+        return model
 
 
 class InteractiveOmniAdapter(BackboneAdapter):
