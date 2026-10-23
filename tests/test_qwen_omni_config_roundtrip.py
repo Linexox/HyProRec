@@ -66,6 +66,20 @@ class QwenOmniConfigRoundtripTest(unittest.TestCase):
             loaded = QwenOmniAdapter.from_config(restored.backbone_config)
         self.assertEqual(loaded.get_input_embeddings().num_embeddings, 32)
         self.assertEqual(loaded.get_output_embeddings().out_features, 40)
+        wrapper_config = HoCRSConfig(
+            backbone_config=restored.backbone_config, views=('txt',),
+            item_feature_dims={'txt': 4}, num_items=3,
+            txt_hypergraph_config={'input_dim': 4, 'hidden_dim': 4,
+                                   'output_dim': 4, 'num_layers': 1},
+            recommendation_hidden_dim=8, recommendation_attention_dim=4,
+            recommendation_router_hidden_dim=8,
+        )
+        with torch.device('meta'):
+            wrapper = HoCRSRecommendationModel(wrapper_config)
+            wrapper.tie_weights()
+        self.assertEqual(wrapper.get_input_embeddings().num_embeddings, 32)
+        self.assertEqual(wrapper.get_output_embeddings().weight.shape[0], 40)
+        self.assertIs(wrapper_config.get_text_config(), restored.backbone_config.text_config)
 
 
 if __name__ == '__main__':
