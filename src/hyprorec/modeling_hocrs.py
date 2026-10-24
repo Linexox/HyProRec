@@ -334,6 +334,14 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
     def load_state_dict(self, state_dict, strict=True, assign=False):
         """Load pre-cleanup checkpoints whose head had one redundant wrapper."""
 
+        if getattr(self.config.backbone_config, 'quantization_config', None):
+            from bitsandbytes.nn import Linear8bitLt
+
+            for module in self.backbone.modules():
+                if isinstance(module, Linear8bitLt) and module.weight.SCB is None:
+                    # The first forward moves scales to runtime state, but
+                    # bitsandbytes' state-dict loader expects them on weight.
+                    module.weight.SCB = module.state.SCB
         remapped = state_dict.copy()
         prefix = "recommendation_head.head."
         for key in list(remapped):

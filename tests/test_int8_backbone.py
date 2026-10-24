@@ -59,6 +59,34 @@ class Int8BackboneTest(unittest.TestCase):
         self.assertFalse(any(p.requires_grad for p in restored.hypergraph_encoders.parameters()))
         self.assertTrue(restored.soft_prompt_embeddings.weight.requires_grad)
 
+    def test_state_reload_restores_runtime_quantization_scales(self):
+        class RuntimeInt8Linear(torch.nn.Linear):
+            def __init__(self):
+                super().__init__(2, 2)
+                self.weight.SCB = None
+                self.state = SimpleNamespace(SCB=torch.ones(2))
+
+            def _load_from_state_dict(self, *args, **kwargs):
+                if self.weight.SCB is None:
+                    raise RuntimeError('quantization scales unavailable on weight')
+                return super()._load_from_state_dict(*args, **kwargs)
+
+        config = HoCRSConfig(
+            backbone_config=Qwen2Config(vocab_size=16, hidden_size=8,
+                intermediate_size=16, num_hidden_layers=1,
+                num_attention_heads=2, num_key_value_heads=2),
+            views=('txt',), num_items=3, item_feature_dims={'txt': 4},
+            txt_hypergraph_config={'input_dim': 4, 'hidden_dim': 4,
+                                  'output_dim': 4, 'num_layers': 1},
+            recommendation_hidden_dim=8, recommendation_attention_dim=4,
+        )
+        model = HoCRSRecommendationModel(config)
+        model.backbone = RuntimeInt8Linear()
+        model.config.backbone_config.quantization_config = {'load_in_8bit': True}
+        with patch('bitsandbytes.nn.Linear8bitLt', RuntimeInt8Linear):
+            model.load_state_dict(model.state_dict())
+        self.assertIs(model.backbone.weight.SCB, model.backbone.state.SCB)
+
 
 if __name__ == '__main__':
     unittest.main()
