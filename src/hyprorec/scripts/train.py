@@ -65,7 +65,9 @@ def main() -> None:
     training_args.report_to = []
     set_seed(training_args.seed)
 
-    backbone_adapter = load_backbone_adapter(model_args.backbone_name_or_path)
+    backbone_adapter = load_backbone_adapter(
+        model_args.backbone_name_or_path, load_in_8bit=model_args.backbone_load_in_8bit,
+    )
     tokenizer = backbone_adapter.tokenizer
     processor = HoCRSProcessor(tokenizer, model_args.num_prompt_tokens)
     tables = load_modality_tables(data_args, model_args)

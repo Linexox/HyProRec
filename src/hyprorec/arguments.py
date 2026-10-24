@@ -15,6 +15,7 @@ from .constants import MODALITIES
 @dataclass
 class ModelArguments:
     backbone_name_or_path: str = "Qwen/Qwen2.5-Omni-3B"
+    backbone_load_in_8bit: bool = False
     recommendation_head: str = "item_table"
     freeze_backbone: bool = True
     num_prompt_tokens: int = 20
@@ -37,6 +38,8 @@ class ModelArguments:
     recommendation_router_hidden_dim: int = 512
 
     def __post_init__(self) -> None:
+        if self.backbone_load_in_8bit and not self.freeze_backbone:
+            raise ValueError("INT8 requires a frozen backbone.")
         if self.recommendation_head != "item_table":
             raise ValueError("Only the item_table recommendation head is supported.")
         if self.item_table_view not in (*MODALITIES, "full", "active"):

@@ -311,6 +311,17 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
     accepts_loss_kwargs = False
 
     @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        result = super().from_pretrained(*args, **kwargs)
+        model = result[0] if isinstance(result, tuple) else result
+        if getattr(model.config.backbone_config, 'quantization_config', None):
+            model.backbone.requires_grad_(False)
+            # Only the frozen backbone is quantized. The wrapper trains its
+            # floating point prompts, graph modules and recommendation head.
+            model.is_quantized = False
+        return result
+
+    @classmethod
     def _fix_state_dict_key_on_load(cls, key: str) -> tuple[str, bool]:
         key, changed = super()._fix_state_dict_key_on_load(key)
         key, count = re.subn(
@@ -335,6 +346,11 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         backbone_adapter: BackboneAdapter | None = None,
     ) -> None:
         super().__init__(config)
+        if getattr(config, 'quantization_config', None):
+            self._keep_in_fp32_modules = [
+                'soft_prompt_embeddings', 'hypergraph_encoders',
+                'hypergraph_projectors', 'graph_moe', 'recommendation_head',
+            ]
         if backbone_adapter is None:
             backbone_adapter = (
                 adapter_from_model(backbone)

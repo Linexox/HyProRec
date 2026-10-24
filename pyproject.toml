@@ -29,6 +29,7 @@ dependencies = [
     "python-dotenv",
     "pyyaml",
     "safetensors",
+    "bitsandbytes==0.45.5",
 ]
 
 # [[tool.uv.index]]

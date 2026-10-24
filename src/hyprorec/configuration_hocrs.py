@@ -115,6 +115,16 @@ class HoCRSConfig(PretrainedConfig):
     ) -> None:
         backbone_config = _backbone_config(backbone_config)
         self.backbone_config = backbone_config
+        quantization = getattr(backbone_config, 'quantization_config', None)
+        if quantization:
+            quantization = (
+                quantization.to_dict() if hasattr(quantization, 'to_dict') else dict(quantization)
+            )
+            skip = list(quantization.get('llm_int8_skip_modules') or [])
+            skip.extend(['soft_prompt_embeddings', 'hypergraph_encoders',
+                         'hypergraph_projectors', 'graph_moe', 'recommendation_head'])
+            quantization['llm_int8_skip_modules'] = list(dict.fromkeys(skip))
+            kwargs['quantization_config'] = quantization
         for name in ("bos_token_id", "eos_token_id", "pad_token_id"):
             kwargs.setdefault(name, getattr(backbone_config, name, None))
         super().__init__(**kwargs)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any
 
 import torch
@@ -241,6 +242,21 @@ class BackboneAdapter:
 class QwenOmniAdapter(BackboneAdapter):
     model_type = "qwen2_5_omni"
 
+    @classmethod
+    def from_pretrained(cls, name_or_path: str, *, load_in_8bit: bool = False):
+        if not load_in_8bit:
+            return super().from_pretrained(name_or_path)
+        from transformers import BitsAndBytesConfig, Qwen2_5OmniThinkerForConditionalGeneration
+
+        model = Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
+            name_or_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True,
+            quantization_config=BitsAndBytesConfig(
+                load_in_8bit=True, llm_int8_skip_modules=['lm_head'],
+            ),
+            device_map={'': int(os.environ.get('LOCAL_RANK', '0'))},
+        )
+        return cls(model, tokenizer=cls.load_tokenizer(name_or_path))
+
     def resize_token_embeddings(self, size: int) -> nn.Module:
         embeddings = super().resize_token_embeddings(size)
         self.config.output_vocab_size = self.get_output_embeddings().weight.size(0)
@@ -384,12 +400,16 @@ ADAPTERS = {
 ADAPTERS["qwen2_5_omni_thinker"] = QwenOmniAdapter
 
 
-def load_backbone_adapter(name_or_path: str) -> BackboneAdapter:
+def load_backbone_adapter(name_or_path: str, *, load_in_8bit: bool = False) -> BackboneAdapter:
     try:
         config = AutoConfig.from_pretrained(name_or_path)
     except ValueError:
         config = AutoConfig.from_pretrained(name_or_path, trust_remote_code=True)
     adapter_type = ADAPTERS.get(config.model_type, BackboneAdapter)
+    if load_in_8bit:
+        if adapter_type is not QwenOmniAdapter:
+            raise ValueError("INT8 loading is currently supported only for Qwen Omni.")
+        return adapter_type.from_pretrained(name_or_path, load_in_8bit=True)
     return adapter_type.from_pretrained(name_or_path)
 
 
