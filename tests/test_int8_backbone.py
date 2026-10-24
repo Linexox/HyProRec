@@ -3,11 +3,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from transformers import Qwen2Config
+import torch
+from transformers import PreTrainedModel, Qwen2Config
 
 from hyprorec.arguments import ModelArguments
 from hyprorec.backbones.base import QwenOmniAdapter, load_backbone_adapter
 from hyprorec.configuration_hocrs import HoCRSConfig
+from hyprorec.modeling_hocrs import HoCRSRecommendationModel
 
 
 class Int8BackboneTest(unittest.TestCase):
@@ -41,6 +43,21 @@ class Int8BackboneTest(unittest.TestCase):
                        'hypergraph_projectors', 'graph_moe', 'recommendation_head'):
             self.assertIn(module, skip)
         self.assertEqual(backbone.quantization_config['llm_int8_skip_modules'], ['lm_head'])
+
+    def test_reload_preserves_frozen_towers_and_trainable_prompts(self):
+        model = SimpleNamespace(
+            config=SimpleNamespace(backbone_config=SimpleNamespace(quantization_config={
+                'load_in_8bit': True}), grounding_checkpoint_path='grounding'),
+            backbone=torch.nn.Linear(2, 2),
+            hypergraph_encoders=torch.nn.ModuleList([torch.nn.Linear(2, 2)]),
+            soft_prompt_embeddings=torch.nn.Embedding(20, 2),
+        )
+        with patch.object(PreTrainedModel, 'from_pretrained', return_value=model):
+            restored = HoCRSRecommendationModel.from_pretrained('checkpoint')
+        self.assertFalse(restored.is_quantized)
+        self.assertFalse(any(p.requires_grad for p in restored.backbone.parameters()))
+        self.assertFalse(any(p.requires_grad for p in restored.hypergraph_encoders.parameters()))
+        self.assertTrue(restored.soft_prompt_embeddings.weight.requires_grad)
 
 
 if __name__ == '__main__':

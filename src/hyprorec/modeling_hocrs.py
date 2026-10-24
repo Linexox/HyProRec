@@ -316,6 +316,8 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
         model = result[0] if isinstance(result, tuple) else result
         if getattr(model.config.backbone_config, 'quantization_config', None):
             model.backbone.requires_grad_(False)
+            if model.config.grounding_checkpoint_path:
+                model.hypergraph_encoders.requires_grad_(False)
             # Only the frozen backbone is quantized. The wrapper trains its
             # floating point prompts, graph modules and recommendation head.
             model.is_quantized = False
