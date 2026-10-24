@@ -42,9 +42,7 @@ training:
   warmup_steps: 480
   warmup_ratio: 0.0
   bf16: true
-  gradient_checkpointing: true
-  gradient_checkpointing_kwargs:
-    use_reentrant: false
+  gradient_checkpointing: false
   ddp_find_unused_parameters: false
   dataloader_num_workers: 4
   dataloader_pin_memory: true
