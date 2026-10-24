@@ -1,5 +1,6 @@
 """INT8 stays confined to the frozen backbone across config reloads."""
 import unittest
+import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -86,6 +87,27 @@ class Int8BackboneTest(unittest.TestCase):
         with patch('bitsandbytes.nn.Linear8bitLt', RuntimeInt8Linear):
             model.load_state_dict(model.state_dict())
         self.assertIs(model.backbone.weight.SCB, model.backbone.state.SCB)
+
+    def test_hf_quantized_reload_preserves_fixed_feature_precision(self):
+        from transformers.modeling_utils import _infer_parameter_dtype
+
+        backbone = Qwen2Config(vocab_size=16, hidden_size=8,
+            intermediate_size=16, num_hidden_layers=1,
+            num_attention_heads=2, num_key_value_heads=2)
+        backbone.quantization_config = {'load_in_8bit': True}
+        config = HoCRSConfig(backbone_config=backbone, views=('txt',),
+            num_items=3, item_feature_dims={'txt': 4},
+            txt_hypergraph_config={'input_dim': 4, 'hidden_dim': 4,
+                                  'output_dim': 4, 'num_layers': 1},
+            recommendation_hidden_dim=8, recommendation_attention_dim=4)
+        model = HoCRSRecommendationModel(config)
+        model.config._pre_quantization_dtype = torch.bfloat16
+        keep = re.compile('|'.join(rf'((^|\.){name}($|\.))'
+                                 for name in model._keep_in_fp32_modules))
+        for name in ('txt_feature_table', 'item_txt_feature_table'):
+            _, dtype = _infer_parameter_dtype(model, name,
+                torch.ones(3, 4, dtype=torch.float32), keep, SimpleNamespace())
+            self.assertEqual(dtype, torch.float32)
 
 
 if __name__ == '__main__':

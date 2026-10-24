@@ -361,6 +361,10 @@ class HoCRSBaseModel(PreTrainedModel, GenerationMixin):
                 'soft_prompt_embeddings', 'hypergraph_encoders',
                 'hypergraph_projectors', 'graph_moe', 'recommendation_head',
             ]
+            self._keep_in_fp32_modules.extend(
+                f'{prefix}{view}_feature_table'
+                for view in config.item_feature_dims for prefix in ('', 'item_')
+            )
         if backbone_adapter is None:
             backbone_adapter = (
                 adapter_from_model(backbone)
