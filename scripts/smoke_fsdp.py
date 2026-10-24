@@ -79,7 +79,7 @@ def main():
     valid = HoCRSDataset(_dataset_config(data_args, data_args.hyperedge_table_path, training=False), 'validation', table)
     args.output_dir = str(cli.output)
     args.max_steps = 3
-    args.eval_steps = args.save_steps = 1
+    args.eval_steps = args.save_steps = args.max_steps
     args.logging_steps = 1
     args.warmup_steps = 0
     args.warmup_ratio = 0.
