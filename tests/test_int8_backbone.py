@@ -109,6 +109,20 @@ class Int8BackboneTest(unittest.TestCase):
                 torch.ones(3, 4, dtype=torch.float32), keep, SimpleNamespace())
             self.assertEqual(dtype, torch.float32)
 
+    def test_int8_omni_reload_uses_the_training_attention_backend(self):
+        from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import Qwen2_5OmniThinkerConfig
+
+        config = Qwen2_5OmniThinkerConfig(text_config={
+            'vocab_size': 32, 'hidden_size': 16, 'intermediate_size': 32,
+            'num_hidden_layers': 1, 'num_attention_heads': 2,
+            'num_key_value_heads': 2,
+        })
+        config.quantization_config = {'load_in_8bit': True}
+        config.text_config._attn_implementation = 'sdpa'
+        with torch.device('meta'):
+            adapter = QwenOmniAdapter.from_config(config)
+        self.assertEqual(adapter.model.model.config._attn_implementation, 'eager')
+
 
 if __name__ == '__main__':
     unittest.main()

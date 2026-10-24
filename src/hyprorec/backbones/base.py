@@ -250,6 +250,7 @@ class QwenOmniAdapter(BackboneAdapter):
 
         model = Qwen2_5OmniThinkerForConditionalGeneration.from_pretrained(
             name_or_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True,
+            attn_implementation='eager',
             quantization_config=BitsAndBytesConfig(
                 load_in_8bit=True, llm_int8_skip_modules=['lm_head'],
             ),
@@ -278,6 +279,8 @@ class QwenOmniAdapter(BackboneAdapter):
 
         thinker_config = _config_value(config, "thinker_config") or config
         model = Qwen2_5OmniThinkerForConditionalGeneration(thinker_config)
+        if getattr(thinker_config, 'quantization_config', None):
+            model.model.config._attn_implementation = 'eager'
         output_size = getattr(thinker_config, "output_vocab_size", model.lm_head.out_features)
         if output_size != model.lm_head.out_features:
             model.lm_head = nn.Linear(model.lm_head.in_features, output_size, bias=False)
